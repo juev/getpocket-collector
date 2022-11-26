@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 )
 
 const feedURL = "GETPOCKET_FEED_URL"
@@ -47,8 +48,14 @@ func main() {
 	}
 	defer f.Close()
 
+	urls := make([]string, 0, len(database))
+	for k := range database {
+		urls = append(urls, string(k))
+	}
+	sort.Strings(urls)
+
 	f.WriteString(fmt.Sprintf("# %s\n\n", channel.Title))
-	for url, title := range database {
-		f.WriteString(fmt.Sprintf("- [%s](%s)\n", title, url))
+	for _, url := range urls {
+		f.WriteString(fmt.Sprintf("- [%s](%s)\n", database[Url(url)], url))
 	}
 }
