@@ -3,21 +3,20 @@ package database
 import (
 	"bufio"
 	_ "embed"
-	"fmt"
 	"html"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/juev/getpocket-collector/helpers"
 )
 
 type Title string
 type Url string
-type Date string
-type Database map[Date]map[Url]Title
+type Database map[time.Time]map[Url]Title
 
 // ParseFile read data from fileName
 func ParseFile(fileName string) (database Database, err error) {
@@ -30,6 +29,8 @@ func ParseFile(fileName string) (database Database, err error) {
 		_ = fileName.Close()
 	}(mdFile)
 
+	// для даты строка вида: `### {{ $date }}`
+	// для ссылки строка вида: `- [{{ $title }}]({{ $url }})`
 	var re *regexp.Regexp
 	if re, err = regexp.Compile(`### (?P<date>.*)|- \[(?P<title>.*)]\((?P<url>.*)\)`); err != nil {
 		return nil, err
@@ -37,12 +38,8 @@ func ParseFile(fileName string) (database Database, err error) {
 
 	fileScanner := bufio.NewScanner(mdFile)
 	fileScanner.Split(bufio.ScanLines)
-	currentDate := Date("")
+	var currentDate time.Time
 	for fileScanner.Scan() {
-		// для даты строка вида: `### {{ $date }}`
-		// для ссылки строка вида: `- [{{ $title }}]({{ $url }})`
-		text := fileScanner.Text()
-		fmt.Println(text)
 		parts := re.FindStringSubmatch(fileScanner.Text())
 		if parts == nil {
 			continue
@@ -59,7 +56,7 @@ func ParseFile(fileName string) (database Database, err error) {
 		// после обработки в result мы будем иметь мапу с тремя заполненными значениями
 		// map[date: title: url:]
 		if result["date"] != "" {
-			currentDate = Date(result["date"])
+			currentDate, _ = time.Parse("02 Jan 2006", result["date"])
 			database[currentDate] = map[Url]Title{}
 			continue
 		}

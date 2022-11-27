@@ -48,13 +48,13 @@ func main() {
 	}
 
 	for _, item := range channel.Item {
-		date, _ := time.Parse(time.RFC1123Z, string(item.PubDate))
-		pubDate := date.Format("02 Jan 2006")
-		if _, ok = data[database.Date(pubDate)]; !ok {
-			data[database.Date(pubDate)] = map[database.Url]database.Title{}
+		tt, _ := time.Parse(time.RFC1123Z, string(item.PubDate))
+		pubDate, _ := time.Parse("02 Jan 2006", tt.Format("02 Jan 2006"))
+		if _, ok = data[pubDate]; !ok {
+			data[pubDate] = map[database.Url]database.Title{}
 		}
 		url := database.NormalizeURL(database.Url(item.Link))
-		data[database.Date(pubDate)][database.Url(url)] = database.Title(item.Title)
+		data[pubDate][database.Url(url)] = database.Title(item.Title)
 	}
 
 	if err = database.WriteFile(databaseFile, templateString, data, channel.Title); err != nil {
