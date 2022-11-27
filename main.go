@@ -1,61 +1,102 @@
 package main
 
 import (
-	"fmt"
+	"bufio"
+	_ "embed"
+	"io"
 	"net/http"
 	"os"
 	"sort"
+	"strings"
+	"text/template"
+
+	"github.com/juev/getpocket-collector/database"
+	"github.com/juev/getpocket-collector/helpers"
+	"github.com/juev/getpocket-collector/rss"
 )
 
 const feedURL = "GETPOCKET_FEED_URL"
 const databaseFolder = "data"
 const databaseFile = "data/database.json"
 
+//go:embed templates/template.tmpl
+var content string
+
 func main() {
 	var err error
 	pocketFeedURL, ok := os.LookupEnv(feedURL)
 	if !ok {
-		exit("failed to read %s env variable", feedURL)
+		helpers.Exit("failed to read %s env variable", feedURL)
 	}
 
-	_, err = os.Stat(databaseFolder)
-	if os.IsNotExist(err) {
+	userName, ok := os.LookupEnv("USERNAME")
+	if !ok {
+		userName = "juev"
+	}
+
+	if _, err = os.Stat(databaseFolder); os.IsNotExist(err) {
 		_ = os.Mkdir("data", 0755)
 		fileData, _ := os.Create(databaseFile)
-		fileData.Close()
+		_ = fileData.Close()
 	}
 
-	database := parseFile(databaseFile)
+	var data database.Database
+	if data, err = database.ParseFile(databaseFile); err != nil {
+		helpers.Exit("failed to parse file %s: %v", databaseFile, err)
+	}
+
 	var resp *http.Response
-	if resp, err = readWithClient(pocketFeedURL); err != nil {
-		exit("failed to read %s: %v", pocketFeedURL, err)
+	if resp, err = helpers.ReadWithClient(pocketFeedURL); err != nil {
+		helpers.Exit("failed to read %s: %v", pocketFeedURL, err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
 
-	var channel *Channel
-	if channel, err = ParseFeed(resp); err != nil {
-		exit("cannot parse feed: %v", err)
+	var channel *rss.Channel
+	if channel, err = rss.ParseFeed(resp); err != nil {
+		helpers.Exit("cannot parse feed: %v", err)
 	}
 
-	for _, item := range channel.Item {
-		database[Url(normalizeURL(item.Link))] = Title(item.Title)
-	}
-	writeFile(databaseFile, database)
-
-	var f *os.File
-	if f, err = os.Create("README.md"); err != nil {
-		exit("cannot create file: %v", err)
-	}
-	defer f.Close()
-
-	urls := make([]string, 0, len(database))
-	for k := range database {
+	urls := make([]string, 0, len(data))
+	for k := range data {
 		urls = append(urls, string(k))
 	}
 	sort.Strings(urls)
 
-	f.WriteString(fmt.Sprintf("# %s\n\n", channel.Title))
-	for _, url := range urls {
-		f.WriteString(fmt.Sprintf("- [%s](%s)\n", database[Url(url)], url))
+	_ = database.WriteFile(databaseFile, data)
+
+	var f *os.File
+	if f, err = os.Create("README.md"); err != nil {
+		helpers.Exit("cannot create file: %v", err)
 	}
+	defer func(f *os.File) {
+		_ = f.Close()
+	}(f)
+
+	var funcMap = template.FuncMap{
+		"normalizeUrl":   func(url database.Url) string { return database.NormalizeURL(url) },
+		"normalizeTitle": func(title database.Title) string { return database.NormalizeTitle(title) },
+	}
+
+	temp := template.Must(template.New("links").Funcs(funcMap).Parse(content))
+
+	r := struct {
+		Title    string
+		UserName string
+		Content  database.Database
+	}{
+		Title:    channel.Title,
+		UserName: userName,
+		Content:  data,
+	}
+
+	var buffer strings.Builder
+	if err = temp.Execute(&buffer, r); err != nil {
+		helpers.Exit("failed to parse template: %v", err)
+	}
+
+	w := bufio.NewWriter(f)
+	_, _ = w.WriteString(buffer.String())
+	_ = w.Flush()
 }
