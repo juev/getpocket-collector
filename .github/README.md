@@ -22,28 +22,27 @@ name: Cronjob operations
 
 on:
   schedule:
-    - cron: "*/15 * * * *" # Runs every 15 minuts
+    - cron: "*/15 * * * *" # Runs every 15 minutes
   workflow_dispatch:
 jobs:
   fetch:
     runs-on: ubuntu-latest
+    container: ghcr.io/juev/getpocket-collector:latest
     steps:
-      - uses: actions/checkout@v3
+      - 
+        uses: actions/checkout@v3
         with:
-          fetch-depth: 0
-      - name: 💿 Setup
-        run: |
-          wget https://github.com/juev/getpocket-collector/releases/latest/download/getpocket-collector-linux-amd64 -O run
-          chmod +x ./run
-      - name: 🚀 Run Automation
-        run: ./run
+          fetch-depth: 1
+      - 
+        name: 🚀 Run Automation
+        run: getpocket-collector
         env:
           GETPOCKET_FEED_URL: "https://getpocket.com/users/juev/feed/all"
           USERNAME: "juev"
-      - name: 🐳 Commit
+      - 
+        name: 🐳 Commit
         uses: EndBug/add-and-commit@v9
         with:
           default_author: github_actions
           message: 'update'
-          add: 'README.md'
 ```
