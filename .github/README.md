@@ -12,6 +12,7 @@ You can create new ENV variables:
 - `USERNAME` for storing username in LICENSE information. Default value: "juev"
 
 Reference:
+
 - [Can I subscribe to my list via RSS?](https://help.getpocket.com/article/1074-can-i-subscribe-to-my-list-via-rss)
 
 ## Github action
