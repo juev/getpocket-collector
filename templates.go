@@ -1,6 +1,7 @@
 package storage
 
 import (
+	// embed templates to string variables
 	_ "embed"
 	"fmt"
 	"os"

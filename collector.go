@@ -1,7 +1,6 @@
 package storage
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -63,12 +62,12 @@ func (s *storage) Read() (err error) {
 
 // Write for write data to fileName
 func (s *storage) Write() (err error) {
-	dataJson, _ := json.MarshalIndent(s, "", "    ")
+	dataJSON, _ := json.MarshalIndent(s, "", "    ")
 	f, err := os.Create(s.fileName)
 	if err != nil {
 		return fmt.Errorf("cannot create file `%s`: %v", s.fileName, err)
 	}
-	if _, err := f.Write(dataJson); err != nil {
+	if _, err := f.Write(dataJSON); err != nil {
 		return fmt.Errorf("cannot write to file `%s`: %v", s.fileName, err)
 	}
 	f.Close()
