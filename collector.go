@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"io"
 	"net/url"
 	"os"
 	"time"
@@ -13,51 +12,47 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-type Title string
-type Link string
-
+// Storage is main interface for json-database
 type Storage interface {
-	Read() (err error)
-	Write() (err error)
-	ParseFeed() (err error)
+	Read() error
+	Write() error
+	ParseFeed() error
+	Proceed() error
 }
 
 type storage struct {
-	Title    Title  `json:"title"`
+	Title    string `json:"title"`
 	Updated  string `json:"updated"`
 	Items    []Item `json:"items"`
 	fileName string
 }
 
+// Item one link from feed
 type Item struct {
-	Title     Title  `json:"title"`
-	Link      Link   `json:"link"`
+	Title     string `json:"title"`
+	Link      string `json:"link"`
 	Published string `json:"published"`
 }
 
+// New creates new storage
 func New(fileName string) Storage {
 	return &storage{fileName: fileName}
 }
 
 // Read data from fileName
 func (s *storage) Read() (err error) {
-	// если файла нет, создаем его
-	// возвращаем пустую структуру без ошибки
 	if _, err = os.Stat(s.fileName); os.IsNotExist(err) {
-		fileData, _ := os.Create(s.fileName)
+		fileData, err := os.Create(s.fileName)
+		if err != nil {
+			return fmt.Errorf("cannot create file `%s`: %v", s.fileName, err)
+		}
 		fileData.Close()
 		return nil
 	}
 
-	dataFile, err := os.Open(s.fileName)
+	data, err := os.ReadFile(s.fileName)
 	if err != nil {
-		return err
-	}
-	defer dataFile.Close()
-
-	data, err := io.ReadAll(dataFile)
-	if err != nil {
-		return err
+		return fmt.Errorf("cannot read file `%s`: %v", s.fileName, err)
 	}
 
 	err = json.Unmarshal(data, s)
@@ -70,14 +65,17 @@ func (s *storage) Write() (err error) {
 	dataJson, _ := json.MarshalIndent(s, "", "    ")
 	f, err := os.Create(s.fileName)
 	if err != nil {
-		return fmt.Errorf("cannot create file: %v", err)
+		return fmt.Errorf("cannot create file `%s`: %v", s.fileName, err)
 	}
-	f.Write(dataJson)
+	if _, err := f.Write(dataJson); err != nil {
+		return fmt.Errorf("cannot write to file `%s`: %v", s.fileName, err)
+	}
 	f.Close()
 
 	return nil
 }
 
+// ParseFeed processed feed from getpocket
 func (s *storage) ParseFeed() (err error) {
 	pocketFeedURL := os.Getenv("GETPOCKET_FEED_URL")
 	if pocketFeedURL == "" {
@@ -93,61 +91,43 @@ func (s *storage) ParseFeed() (err error) {
 
 	lastUpdate, err := time.Parse(time.RFC3339, s.Updated)
 
-	s.Title = Title(feed.Title)
+	s.Title = feed.Title
 	for _, el := range feed.Items {
 		if lastUpdate.Before(*el.PublishedParsed) {
 			s.Items = append(s.Items, Item{
 				Title:     normalizeTitle(el.Title),
 				Link:      normalizeLink(el.Link),
-				Published: el.Published,
+				Published: el.PublishedParsed.Format(time.RFC3339),
 			})
+			s.Updated = el.Published
 		}
 	}
 
 	return nil
 }
 
-// func TemplateFile() (err error) {
-// 	userName, ok := os.LookupEnv("USERNAME")
-// 	if !ok {
-// 		// if USERNAME is not setting, we use "juev" by default ;)
-// 		userName = "juev"
-// 	}
+// Proceed simple function for read/parseFeed/write
+func (s *storage) Proceed() (err error) {
+	if err := s.Read(); err != nil {
+		return err
+	}
 
-// 	var funcMap = template.FuncMap{
-// 		"normalizeUrl":   func(url string) string { return NormalizeURL(url) },
-// 		"normalizeTitle": func(title string) string { return NormalizeTitle(title) },
-// 	}
+	if err := s.ParseFeed(); err != nil {
+		return err
+	}
 
-// 	temp := template.Must(template.New("links").Funcs(funcMap).Parse(content))
+	if err := s.Write(); err != nil {
+		return err
+	}
 
-// 	r := struct {
-// 		Title    string
-// 		UserName string
-// 		Content  Storage
-// 	}{
-// 		Title:    "sdf",
-// 		UserName: userName,
-// 		Content:  data,
-// 	}
-
-// 	var buffer strings.Builder
-// 	if err = temp.Execute(&buffer, r); err != nil {
-// 		return err
-// 	}
-
-// 	w := bufio.NewWriter(f)
-// 	_, _ = w.WriteString(buffer.String())
-// 	_ = w.Flush()
-
-// 	return nil
-// }
+	return nil
+}
 
 // normalizeLink should remove all utm from query
-func normalizeLink(in string) Link {
+func normalizeLink(in string) string {
 	u, err := url.Parse(string(in))
 	if err != nil {
-		return Link(in)
+		return in
 	}
 
 	query := url.Values{}
@@ -159,12 +139,12 @@ func normalizeLink(in string) Link {
 		}
 	}
 	u.RawQuery = query.Encode()
-	return Link(u.String())
+	return u.String()
 }
 
 // normalizeTitle unescapes entities like "&lt;" to become "<"
-func normalizeTitle(in string) Title {
-	return Title(html.UnescapeString(in))
+func normalizeTitle(in string) string {
+	return html.UnescapeString(in)
 }
 
 func oneOff(k string, fields []string) bool {
