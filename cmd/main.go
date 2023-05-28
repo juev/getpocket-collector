@@ -5,6 +5,7 @@ import (
 	"os"
 
 	storage "github.com/juev/getpocket-collector"
+	"github.com/juev/getpocket-collector/templates"
 )
 
 const storageFile = "data.json"
@@ -22,7 +23,7 @@ func run() error {
 		return err
 	}
 
-	if err := data.TemplateFile(); err != nil {
+	if err := templates.TemplateFile(data); err != nil {
 		return err
 	}
 

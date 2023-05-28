@@ -1,4 +1,4 @@
-package storage
+package templates
 
 import (
 	// embed templates to string variables
@@ -7,12 +7,14 @@ import (
 	"os"
 	"strings"
 	"text/template"
+
+	storage "github.com/juev/getpocket-collector"
 )
 
-//go:embed templates/template.tmpl
+//go:embed template.tmpl
 var templateString string
 
-func (s *storage) TemplateFile() (err error) {
+func TemplateFile(s storage.Storage) (err error) {
 	userName := os.Getenv("USERNAME")
 	if userName == "" {
 		// if USERNAME is not setting, we use "juev" by default ;)
@@ -23,7 +25,7 @@ func (s *storage) TemplateFile() (err error) {
 
 	r := struct {
 		UserName string
-		Content  Storage
+		Content  storage.Storage
 	}{
 		UserName: userName,
 		Content:  s,

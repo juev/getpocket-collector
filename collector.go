@@ -17,7 +17,6 @@ type Storage interface {
 	Write() error
 	ParseFeed() error
 	Proceed() error
-	TemplateFile() error
 }
 
 type storage struct {
@@ -133,7 +132,7 @@ func normalizeLink(in string) string {
 
 	query := url.Values{}
 	for key, value := range u.Query() {
-		if oneOff(key, []string{"v", "p", "id"}) {
+		if oneOff(key, []string{"v", "p", "id", "article"}) {
 			for _, v := range value {
 				query.Add(key, v)
 			}
