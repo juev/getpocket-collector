@@ -22,5 +22,9 @@ func run() error {
 		return err
 	}
 
+	if err := data.TemplateFile(); err != nil {
+		return err
+	}
+
 	return nil
 }

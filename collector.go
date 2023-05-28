@@ -18,6 +18,7 @@ type Storage interface {
 	Write() error
 	ParseFeed() error
 	Proceed() error
+	TemplateFile() error
 }
 
 type storage struct {
@@ -92,14 +93,15 @@ func (s *storage) ParseFeed() (err error) {
 	lastUpdate, err := time.Parse(time.RFC3339, s.Updated)
 
 	s.Title = feed.Title
-	for _, el := range feed.Items {
+	for i := len(feed.Items) - 1; i != 0; i-- {
+		el := feed.Items[i]
 		if lastUpdate.Before(*el.PublishedParsed) {
 			s.Items = append(s.Items, Item{
 				Title:     normalizeTitle(el.Title),
 				Link:      normalizeLink(el.Link),
 				Published: el.PublishedParsed.Format(time.RFC3339),
 			})
-			s.Updated = el.Published
+			s.Updated = el.PublishedParsed.Format(time.RFC3339)
 		}
 	}
 
