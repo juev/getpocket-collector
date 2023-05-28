@@ -2,62 +2,36 @@ package main
 
 import (
 	_ "embed"
-	"io"
-	"net/http"
+	"fmt"
 	"os"
-	"time"
 
-	"github.com/juev/getpocket-collector/database"
-	"github.com/juev/getpocket-collector/helpers"
-	"github.com/juev/getpocket-collector/rss"
+	"github.com/juev/getpocket-collector/storage"
 )
 
-const databaseFile = "README.md"
+const storageFile = "data.json"
 
 //go:embed templates/template.tmpl
 var templateString string
 
 func main() {
-	var err error
-	pocketFeedURL, ok := os.LookupEnv("GETPOCKET_FEED_URL")
-	if !ok {
-		helpers.Exit("failed to read `GETPOCKET_FEED_URL` env variable")
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	data := storage.New(storageFile)
+	if err := data.Read(); err != nil {
+		return fmt.Errorf("failed parse file `%s`: %v", storageFile, err)
 	}
 
-	if _, err = os.Stat(databaseFile); os.IsNotExist(err) {
-		fileData, _ := os.Create(databaseFile)
-		_ = fileData.Close()
+	if err := data.ParseFeed(); err != nil {
+		return err
+	}
+	if err := data.Write(); err != nil {
+		return fmt.Errorf("failed write to file `%s`: %v", storageFile, err)
 	}
 
-	var data database.Database
-	if data, err = database.ParseFile(databaseFile); err != nil {
-		helpers.Exit("failed to parse file %s: %v", databaseFile, err)
-	}
-
-	var resp *http.Response
-	if resp, err = helpers.ReadWithClient(pocketFeedURL); err != nil {
-		helpers.Exit("failed to read %s: %v", pocketFeedURL, err)
-	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
-
-	var channel *rss.Channel
-	if channel, err = rss.ParseFeed(resp); err != nil {
-		helpers.Exit("cannot parse feed: %v", err)
-	}
-
-	for _, item := range channel.Item {
-		tt, _ := time.Parse(time.RFC1123Z, string(item.PubDate))
-		pubDate, _ := time.Parse("02 Jan 2006", tt.Format("02 Jan 2006"))
-		if _, ok = data[pubDate]; !ok {
-			data[pubDate] = map[database.Url]database.Title{}
-		}
-		url := database.NormalizeURL(database.Url(item.Link))
-		data[pubDate][database.Url(url)] = database.Title(item.Title)
-	}
-
-	if err = database.WriteFile(databaseFile, templateString, data, channel.Title); err != nil {
-		helpers.Exit("failed to write file `%s`: %v", databaseFile, err)
-	}
+	return nil
 }
