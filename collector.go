@@ -92,8 +92,8 @@ func (s *storage) ParseFeed() (err error) {
 	lastUpdate, err := time.Parse(time.RFC3339, s.Updated)
 
 	s.Title = feed.Title
-	for i := len(feed.Items) - 1; i != 0; i-- {
-		el := feed.Items[i]
+	for i := range feed.Items {
+		el := feed.Items[len(feed.Items)-i-1]
 		if lastUpdate.Before(*el.PublishedParsed) {
 			s.Items = append(s.Items, Item{
 				Title:     normalizeTitle(el.Title),
