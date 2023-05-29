@@ -16,7 +16,7 @@ type Storage interface {
 	Read() error
 	Write() error
 	ParseFeed() error
-	Proceed() error
+	Update() error
 }
 
 type storage struct {
@@ -106,8 +106,8 @@ func (s *storage) ParseFeed() (err error) {
 	return nil
 }
 
-// Proceed simple function for read/parseFeed/write
-func (s *storage) Proceed() (err error) {
+// Update simple function for read/parseFeed/write
+func (s *storage) Update() (err error) {
 	if err := s.Read(); err != nil {
 		return err
 	}

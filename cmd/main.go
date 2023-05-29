@@ -19,7 +19,7 @@ func main() {
 
 func run() error {
 	data := storage.New(storageFile)
-	if err := data.Proceed(); err != nil {
+	if err := data.Update(); err != nil {
 		return err
 	}
 
