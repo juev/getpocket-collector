@@ -1,0 +1,158 @@
+package storage
+
+import (
+	"encoding/json"
+	"fmt"
+	"html"
+	"net/url"
+	"os"
+	"time"
+
+	"github.com/mmcdole/gofeed"
+)
+
+// Database is main interface for json-database
+type Database interface {
+	Read() error
+	Write() error
+	ParseFeed() error
+	Update() error
+}
+
+// Storage is struct for storing feed info
+type Storage struct {
+	Title    string `json:"title"`
+	Updated  string `json:"updated"`
+	Items    []Item `json:"items"`
+	fileName string
+	feed     string
+}
+
+// Item one link from feed
+type Item struct {
+	Title     string `json:"title"`
+	Link      string `json:"link"`
+	Published string `json:"published"`
+}
+
+// New creates new storage
+func New(feed, fileName string) *Storage {
+	return &Storage{
+		fileName: fileName,
+		feed:     feed,
+	}
+}
+
+// Read data from fileName
+func (s *Storage) Read() (err error) {
+	if _, err = os.Stat(s.fileName); os.IsNotExist(err) {
+		fileData, err := os.Create(s.fileName)
+		if err != nil {
+			return fmt.Errorf("cannot create file `%s`: %v", s.fileName, err)
+		}
+		fileData.Close()
+		return nil
+	}
+
+	data, err := os.ReadFile(s.fileName)
+	if err != nil {
+		return fmt.Errorf("cannot read file `%s`: %v", s.fileName, err)
+	}
+
+	err = json.Unmarshal(data, s)
+
+	return
+}
+
+// Write for write data to fileName
+func (s *Storage) Write() (err error) {
+	dataJSON, _ := json.MarshalIndent(s, "", "    ")
+	f, err := os.Create(s.fileName)
+	if err != nil {
+		return fmt.Errorf("cannot create file `%s`: %v", s.fileName, err)
+	}
+	if _, err := f.Write(dataJSON); err != nil {
+		return fmt.Errorf("cannot write to file `%s`: %v", s.fileName, err)
+	}
+	f.Close()
+
+	return nil
+}
+
+// ParseFeed processed feed from getpocket
+func (s *Storage) ParseFeed() (err error) {
+	fp := gofeed.NewParser()
+	fp.UserAgent = "getpocket-collector 1.0"
+	feed, err := fp.ParseURL(s.feed)
+	if err != nil {
+		return fmt.Errorf("cannot parse feed: %v", err)
+	}
+
+	lastUpdate, err := time.Parse(time.RFC3339, s.Updated)
+
+	s.Title = feed.Title
+	for i := range feed.Items {
+		el := feed.Items[len(feed.Items)-i-1]
+		if lastUpdate.Before(*el.PublishedParsed) {
+			s.Items = append(s.Items, Item{
+				Title:     normalizeTitle(el.Title),
+				Link:      normalizeLink(el.Link),
+				Published: el.PublishedParsed.Format(time.RFC3339),
+			})
+			s.Updated = el.PublishedParsed.Format(time.RFC3339)
+		}
+	}
+
+	return nil
+}
+
+// Update simple function for read/parseFeed/write
+func (s *Storage) Update() (err error) {
+	if err := s.Read(); err != nil {
+		return err
+	}
+
+	if err := s.ParseFeed(); err != nil {
+		return err
+	}
+
+	if err := s.Write(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// normalizeLink should remove all utm from query
+func normalizeLink(in string) string {
+	u, err := url.Parse(string(in))
+	if err != nil {
+		return in
+	}
+
+	query := url.Values{}
+	for key, value := range u.Query() {
+		if oneOff(key, []string{"v", "p", "id", "article"}) {
+			for _, v := range value {
+				query.Add(key, v)
+			}
+		}
+	}
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
+// normalizeTitle unescapes entities like "&lt;" to become "<"
+func normalizeTitle(in string) string {
+	return html.UnescapeString(in)
+}
+
+func oneOff(k string, fields []string) bool {
+	for _, el := range fields {
+		if k == el {
+			return true
+		}
+	}
+
+	return false
+}
