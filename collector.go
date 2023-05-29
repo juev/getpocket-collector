@@ -24,6 +24,7 @@ type storage struct {
 	Updated  string `json:"updated"`
 	Items    []Item `json:"items"`
 	fileName string
+	feed     string
 }
 
 // Item one link from feed
@@ -34,8 +35,11 @@ type Item struct {
 }
 
 // New creates new storage
-func New(fileName string) Storage {
-	return &storage{fileName: fileName}
+func New(feed, fileName string) Storage {
+	return &storage{
+		fileName: fileName,
+		feed:     feed,
+	}
 }
 
 // Read data from fileName
@@ -76,14 +80,9 @@ func (s *storage) Write() (err error) {
 
 // ParseFeed processed feed from getpocket
 func (s *storage) ParseFeed() (err error) {
-	pocketFeedURL := os.Getenv("GETPOCKET_FEED_URL")
-	if pocketFeedURL == "" {
-		return fmt.Errorf("failed to read `GETPOCKET_FEED_URL` env variable")
-	}
-
 	fp := gofeed.NewParser()
 	fp.UserAgent = "getpocket-collector 1.0"
-	feed, err := fp.ParseURL(pocketFeedURL)
+	feed, err := fp.ParseURL(s.feed)
 	if err != nil {
 		return fmt.Errorf("cannot parse feed: %v", err)
 	}

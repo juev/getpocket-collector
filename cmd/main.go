@@ -18,7 +18,12 @@ func main() {
 }
 
 func run() error {
-	data := storage.New(storageFile)
+	pocketFeedURL := os.Getenv("GETPOCKET_FEED_URL")
+	if pocketFeedURL == "" {
+		return fmt.Errorf("failed to read `GETPOCKET_FEED_URL` env variable")
+	}
+
+	data := storage.New(pocketFeedURL, storageFile)
 	if err := data.Update(); err != nil {
 		return err
 	}
