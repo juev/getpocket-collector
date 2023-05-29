@@ -16,8 +16,8 @@ archives:
     format: binary
     name_template: >- 
       {{ .ProjectName }}-
-      {{ title .Os }}-
-      {{- title .Arch }}
+      {{- tolower .Os}}-
+      {{- tolower .Arch }}
 checksum:
   name_template: 'checksums.txt'
 snapshot:
