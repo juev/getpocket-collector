@@ -28,7 +28,13 @@ func run() error {
 		return err
 	}
 
-	if err := templates.TemplateFile(data); err != nil {
+	userName := os.Getenv("USERNAME")
+	if userName == "" {
+		// if USERNAME is not setting, we use "juev" by default ;)
+		userName = "juev"
+	}
+
+	if err := templates.TemplateFile(data, userName); err != nil {
 		return err
 	}
 

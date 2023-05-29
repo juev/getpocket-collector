@@ -11,15 +11,16 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-// Storage is main interface for json-database
-type Storage interface {
+// Database is main interface for json-database
+type Database interface {
 	Read() error
 	Write() error
 	ParseFeed() error
 	Update() error
 }
 
-type storage struct {
+// Storage is struct for storing feed info
+type Storage struct {
 	Title    string `json:"title"`
 	Updated  string `json:"updated"`
 	Items    []Item `json:"items"`
@@ -35,15 +36,15 @@ type Item struct {
 }
 
 // New creates new storage
-func New(feed, fileName string) Storage {
-	return &storage{
+func New(feed, fileName string) *Storage {
+	return &Storage{
 		fileName: fileName,
 		feed:     feed,
 	}
 }
 
 // Read data from fileName
-func (s *storage) Read() (err error) {
+func (s *Storage) Read() (err error) {
 	if _, err = os.Stat(s.fileName); os.IsNotExist(err) {
 		fileData, err := os.Create(s.fileName)
 		if err != nil {
@@ -64,7 +65,7 @@ func (s *storage) Read() (err error) {
 }
 
 // Write for write data to fileName
-func (s *storage) Write() (err error) {
+func (s *Storage) Write() (err error) {
 	dataJSON, _ := json.MarshalIndent(s, "", "    ")
 	f, err := os.Create(s.fileName)
 	if err != nil {
@@ -79,7 +80,7 @@ func (s *storage) Write() (err error) {
 }
 
 // ParseFeed processed feed from getpocket
-func (s *storage) ParseFeed() (err error) {
+func (s *Storage) ParseFeed() (err error) {
 	fp := gofeed.NewParser()
 	fp.UserAgent = "getpocket-collector 1.0"
 	feed, err := fp.ParseURL(s.feed)
@@ -106,7 +107,7 @@ func (s *storage) ParseFeed() (err error) {
 }
 
 // Update simple function for read/parseFeed/write
-func (s *storage) Update() (err error) {
+func (s *Storage) Update() (err error) {
 	if err := s.Read(); err != nil {
 		return err
 	}
