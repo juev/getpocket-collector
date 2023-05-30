@@ -94,12 +94,14 @@ func (s *Storage) ParseFeed() (err error) {
 	for i := range feed.Items {
 		el := feed.Items[len(feed.Items)-i-1]
 		if lastUpdate.Before(*el.PublishedParsed) {
-			s.Items = append(s.Items, Item{
-				Title:     normalizeTitle(el.Title),
-				Link:      normalizeLink(el.Link),
-				Published: el.PublishedParsed.Format(time.RFC3339),
-			})
-			s.Updated = el.PublishedParsed.Format(time.RFC3339)
+			if s.notContainsLink(el.Link) {
+				s.Items = append(s.Items, Item{
+					Title:     normalizeTitle(el.Title),
+					Link:      normalizeLink(el.Link),
+					Published: el.PublishedParsed.Format(time.RFC3339),
+				})
+				s.Updated = el.PublishedParsed.Format(time.RFC3339)
+			}
 		}
 	}
 
@@ -155,4 +157,14 @@ func oneOff(k string, fields []string) bool {
 	}
 
 	return false
+}
+
+func (s *Storage) notContainsLink(link string) bool {
+	for _, el := range s.Items {
+		if link == el.Link {
+			return false
+		}
+	}
+
+	return true
 }
