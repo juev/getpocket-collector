@@ -94,10 +94,11 @@ func (s *Storage) ParseFeed() (err error) {
 	for i := range feed.Items {
 		el := feed.Items[len(feed.Items)-i-1]
 		if lastUpdate.Before(*el.PublishedParsed) {
-			if s.notContainsLink(el.Link) {
+			link := normalizeLink(el.Link)
+			if s.notContainsLink(link) {
 				s.Items = append(s.Items, Item{
 					Title:     normalizeTitle(el.Title),
-					Link:      normalizeLink(el.Link),
+					Link:      link,
 					Published: el.PublishedParsed.Format(time.RFC3339),
 				})
 				s.Updated = el.PublishedParsed.Format(time.RFC3339)
