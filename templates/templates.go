@@ -43,7 +43,8 @@ func TemplateFile(s *storage.Storage, userName string) (err error) {
 		if err != nil {
 			return err
 		}
-		year, week := t.Add(46 * time.Hour).ISOWeek() // Saturday 2:00
+		// новая неделя должна начинаться с 1:00 субботы
+		year, week := t.Add(47 * time.Hour).ISOWeek()
 		currentWeek = fmt.Sprintf("%d-%d", year, week)
 		if weekNumber != currentWeek {
 			if weekNumber != "" {
