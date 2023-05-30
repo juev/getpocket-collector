@@ -26,6 +26,7 @@ type Storage struct {
 	Items    []Item `json:"items"`
 	fileName string
 	feed     string
+	links    map[string]struct{}
 }
 
 // Item one link from feed
@@ -60,6 +61,11 @@ func (s *Storage) Read() (err error) {
 	}
 
 	err = json.Unmarshal(data, s)
+
+	s.links = make(map[string]struct{})
+	for _, el := range s.Items {
+		s.links[el.Link] = struct{}{}
+	}
 
 	return
 }
@@ -161,10 +167,8 @@ func oneOff(k string, fields []string) bool {
 }
 
 func (s *Storage) notContainsLink(link string) bool {
-	for _, el := range s.Items {
-		if link == el.Link {
-			return false
-		}
+	if _, ok := s.links[link]; ok {
+		return false
 	}
 
 	return true
