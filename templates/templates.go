@@ -20,6 +20,7 @@ type Data struct {
 	Title    string
 	UserName string
 	Content  storage.Database
+	Count    int
 }
 
 func TemplateFile(s *storage.Storage, userName string) (err error) {
@@ -59,6 +60,7 @@ func TemplateFile(s *storage.Storage, userName string) (err error) {
 	writeTemplate(r, weekNumber, weekItems, temp)
 
 	// Update README.md
+	r.Count = len(s.Items)
 	writeTemplate(r, "", weekItems, temp)
 
 	return nil
