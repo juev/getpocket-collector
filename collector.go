@@ -5,13 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"time"
 
-	"github.com/PuerkitoBio/goquery"
+	"github.com/anaskhan96/soup"
 	"github.com/mmcdole/gofeed"
 )
 
@@ -148,7 +149,7 @@ func (s *Storage) Normalize() (err error) {
 	}
 
 	var items []Item
-	for _, item := range s.Items[:100] {
+	for _, item := range s.Items {
 		fmt.Printf("check url: %s\n", item.Link)
 		title, finishURL, err := getURL(item.Link)
 		if err != nil {
@@ -229,15 +230,11 @@ func getURL(url string) (title, finalURL string, err error) {
 		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %v", url, err)
 	}
 	defer resp.Body.Close()
+	bodyBytes, err := io.ReadAll(resp.Body)
 
-	doc, err := goquery.NewDocumentFromResponse(resp)
-	if err != nil {
-		return title, finalURL, fmt.Errorf("cannot parse html from url (%s): %v", url, err)
-	}
-
+	title = soup.HTMLParse(string(bodyBytes)).Find("head").Find("title").Text()
 	finalURL = resp.Request.URL.String()
 
-	title = doc.Find("title").Text()
 	if title == "" {
 		title = "Untitle"
 	}
