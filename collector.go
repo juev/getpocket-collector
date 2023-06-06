@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/anaskhan96/soup"
 	"github.com/mmcdole/gofeed"
@@ -153,7 +155,7 @@ func (s *Storage) Normalize() (err error) {
 		fmt.Printf("check url: %s\n", item.Link)
 		title, finishURL, err := getURL(item.Link)
 		if err != nil {
-			fmt.Printf("get error: %v\n", errors.Unwrap(err))
+			fmt.Printf("failed: %v\n", errors.Unwrap(err))
 			continue
 		}
 		items = append(items, Item{
@@ -192,7 +194,20 @@ func normalizeLink(in string) string {
 
 // normalizeTitle unescapes entities like "&lt;" to become "<"
 func normalizeTitle(in string) string {
-	return html.UnescapeString(in)
+	in = html.UnescapeString(in)
+	in = strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return -1
+	}, in)
+
+	in = strings.ReplaceAll(in, "  ", " ")
+	in = strings.ReplaceAll(in, "\n", "")
+	in = strings.ReplaceAll(in, "\t", "")
+
+	in = strings.TrimSpace(in)
+	return in
 }
 
 func oneOff(k string, fields []string) bool {
@@ -227,12 +242,15 @@ func getURL(url string) (title, finalURL string, err error) {
 	}
 	resp, err := client.Get(url)
 	if err != nil {
-		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %v", url, err)
+		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", url, err)
 	}
 	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 
-	title = soup.HTMLParse(string(bodyBytes)).Find("head").Find("title").Text()
+	tt := soup.HTMLParse(string(bodyBytes)).Find("head").Find("title")
+	if tt.Pointer != nil {
+		title = tt.Text()
+	}
 	finalURL = resp.Request.URL.String()
 
 	if title == "" {
