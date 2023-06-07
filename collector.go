@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
 	"github.com/anaskhan96/soup"
 	"github.com/mmcdole/gofeed"
+	"golang.org/x/sync/errgroup"
 )
 
 // Database is main interface for json-database
@@ -24,6 +27,7 @@ type Database interface {
 	Write() error
 	ParseFeed() error
 	Update() error
+	Normalize() error
 }
 
 // Storage is struct for storing feed info
@@ -151,19 +155,31 @@ func (s *Storage) Normalize() (err error) {
 	}
 
 	var items []Item
+	var lock sync.Mutex
+	group := errgroup.Group{}
+	group.SetLimit(100)
 	for _, item := range s.Items {
-		fmt.Printf("check url: %s\n", item.Link)
-		title, finishURL, err := getURL(item.Link)
-		if err != nil {
-			fmt.Printf("failed: %v\n", errors.Unwrap(err))
-			continue
-		}
-		items = append(items, Item{
-			Title:     normalizeTitle(title),
-			Link:      normalizeLink(finishURL),
-			Published: item.Published,
-		})
+		item := item
+		group.Go(
+			func() error {
+				fmt.Printf("check url: %s\n", item.Link)
+				title, finishURL, err := getURL(item.Link)
+				if err != nil {
+					fmt.Printf("failed: %v\n", errors.Unwrap(err))
+					return nil
+				}
+				lock.Lock()
+				items = append(items, Item{
+					Title:     normalizeTitle(title),
+					Link:      normalizeLink(finishURL),
+					Published: item.Published,
+				})
+				lock.Unlock()
+				return nil
+			})
 	}
+	_ = group.Wait()
+	sort.Slice(items, sortItems(items))
 	s.Items = items
 
 	if err := s.Write(); err != nil {
@@ -173,9 +189,15 @@ func (s *Storage) Normalize() (err error) {
 	return nil
 }
 
+func sortItems(s []Item) func(int, int) bool {
+	return func(i, j int) bool {
+		return s[i].Published < s[j].Published
+	}
+}
+
 // normalizeLink should remove all utm from query
 func normalizeLink(in string) string {
-	u, err := url.Parse(string(in))
+	u, err := url.Parse(in)
 	if err != nil {
 		return in
 	}
@@ -231,30 +253,39 @@ func (s *Storage) notContainsLink(link string) bool {
 func getURL(url string) (title, finalURL string, err error) {
 	client := &http.Client{
 		Transport: &http.Transport{
-			Dial: (&net.Dialer{
+			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
-			}).Dial,
+			}).DialContext,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
-	resp, err := client.Get(url)
+	resp, err := client.Head(url)
 	if err != nil {
 		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", url, err)
 	}
 	defer resp.Body.Close()
-	bodyBytes, err := io.ReadAll(resp.Body)
-
-	tt := soup.HTMLParse(string(bodyBytes)).Find("head").Find("title")
-	if tt.Pointer != nil {
-		title = tt.Text()
-	}
 	finalURL = resp.Request.URL.String()
+	if b, err := io.ReadAll(resp.Body); err == nil {
+		if strings.Contains(http.DetectContentType(b), "text/plain;") {
+			response, err := client.Get(finalURL)
+			if err != nil {
+				return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", url, err)
+			}
+			defer response.Body.Close()
+			bodyBytes, _ := io.ReadAll(response.Body)
+
+			tt := soup.HTMLParse(string(bodyBytes)).Find("head").Find("title")
+			if tt.Pointer != nil {
+				title = tt.Text()
+			}
+		}
+	}
 
 	if title == "" {
-		title = "Untitle"
+		title = "Untitled"
 	}
 
 	return title, finalURL, nil
