@@ -111,8 +111,7 @@ func (s *Storage) ParseFeed() (err error) {
 	for i := range feed.Items {
 		el := feed.Items[len(feed.Items)-i-1]
 		if lastUpdate.Before(*el.PublishedParsed) {
-			link := normalizeLink(el.Link)
-			title, link, err := getURL(link)
+			title, link, err := getURL(el.Link)
 			if err != nil {
 				s.Updated = el.PublishedParsed.Format(time.RFC3339)
 				continue
@@ -120,7 +119,7 @@ func (s *Storage) ParseFeed() (err error) {
 			if s.notContainsLink(link) {
 				s.Items = append(s.Items, Item{
 					Title:     normalizeTitle(title),
-					Link:      link,
+					Link:      normalizeLink(link),
 					Published: el.PublishedParsed.Format(time.RFC3339),
 				})
 				s.Updated = el.PublishedParsed.Format(time.RFC3339)
@@ -225,9 +224,6 @@ func normalizeTitle(in string) string {
 	}, in)
 
 	in = strings.ReplaceAll(in, "  ", " ")
-	in = strings.ReplaceAll(in, "\n", "")
-	in = strings.ReplaceAll(in, "\t", "")
-
 	in = strings.TrimSpace(in)
 	return in
 }
