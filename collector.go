@@ -164,7 +164,7 @@ func (s *Storage) Normalize() (err error) {
 	var items []Item
 	var lock sync.Mutex
 	group := errgroup.Group{}
-	group.SetLimit(100)
+	group.SetLimit(20)
 	for _, item := range s.Items {
 		item := item
 		group.Go(
