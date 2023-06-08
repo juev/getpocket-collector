@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,13 +83,20 @@ func (s *Storage) Read() (err error) {
 }
 
 // Write for write data to fileName
-func (s *Storage) Write() (err error) {
-	dataJSON, _ := json.MarshalIndent(s, "", "    ")
+func (s *Storage) Write() error {
+	var buf bytes.Buffer
+	dec := json.NewEncoder(&buf)
+	dec.SetIndent("", "    ")
+	dec.SetEscapeHTML(false)
+	if err := dec.Encode(s); err != nil {
+		return err
+	}
+
 	f, err := os.Create(s.fileName)
 	if err != nil {
 		return fmt.Errorf("cannot create file `%s`: %v", s.fileName, err)
 	}
-	if _, err := f.Write(dataJSON); err != nil {
+	if _, err := f.Write(buf.Bytes()); err != nil {
 		return fmt.Errorf("cannot write to file `%s`: %v", s.fileName, err)
 	}
 	f.Close()
