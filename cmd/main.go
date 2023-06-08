@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -11,6 +12,18 @@ import (
 const storageFile = "data.json"
 
 func main() {
+	var normalize bool
+	flag.BoolVar(&normalize, "n", false, "only normalize database")
+	flag.Parse()
+
+	if normalize {
+		if err := normalizeData(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -38,5 +51,16 @@ func run() error {
 		return err
 	}
 
+	return nil
+}
+
+func normalizeData() error {
+	data := storage.New("", storageFile)
+	if err := data.Normalize(); err != nil {
+		return err
+	}
+	if err := data.Write(); err != nil {
+		return err
+	}
 	return nil
 }

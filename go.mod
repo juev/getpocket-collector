@@ -2,7 +2,11 @@ module github.com/juev/getpocket-collector
 
 go 1.19
 
-require github.com/mmcdole/gofeed v1.2.1
+require (
+	github.com/anaskhan96/soup v1.2.5
+	github.com/mmcdole/gofeed v1.2.1
+	golang.org/x/sync v0.2.0
+)
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.0 // indirect
