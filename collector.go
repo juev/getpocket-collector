@@ -266,22 +266,15 @@ func getURL(url string) (title, finalURL string, err error) {
 			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
-	resp, err := client.Head(url)
+	response, err := client.Get(url)
 	if err != nil {
 		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", url, err)
 	}
-	defer resp.Body.Close()
-	finalURL = resp.Request.URL.String()
-	if b, err := io.ReadAll(resp.Body); err == nil {
-		if strings.Contains(http.DetectContentType(b), "text/plain;") {
-			response, err := client.Get(finalURL)
-			if err != nil {
-				return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", url, err)
-			}
-			defer response.Body.Close()
-			bodyBytes, _ := io.ReadAll(response.Body)
-
-			tt := soup.HTMLParse(string(bodyBytes)).Find("head").Find("title")
+	defer response.Body.Close()
+	finalURL = response.Request.URL.String()
+	if body, err := io.ReadAll(response.Body); err == nil {
+		if strings.Contains(http.DetectContentType(body), "text/html;") {
+			tt := soup.HTMLParse(string(body)).Find("head").Find("title")
 			if tt.Pointer != nil {
 				title = tt.Text()
 			}
