@@ -273,11 +273,9 @@ func getURL(url string) (title, finalURL string, err error) {
 	defer response.Body.Close()
 	finalURL = response.Request.URL.String()
 	if body, err := io.ReadAll(response.Body); err == nil {
-		if strings.Contains(http.DetectContentType(body), "text/html;") {
-			tt := soup.HTMLParse(string(body)).Find("head").Find("title")
-			if tt.Pointer != nil {
-				title = tt.Text()
-			}
+		tt := soup.HTMLParse(string(body)).Find("head").Find("title")
+		if tt.Pointer != nil {
+			title = tt.Text()
 		}
 	}
 
