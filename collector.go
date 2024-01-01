@@ -13,6 +13,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -40,7 +41,7 @@ type Storage struct {
 	Items    []Item `json:"items"`
 	fileName string
 	feed     string
-	links    map[string]struct{}
+	links    sync.Map
 }
 
 // Item one link from feed
@@ -55,7 +56,6 @@ func New(feed, fileName string) *Storage {
 	return &Storage{
 		fileName: fileName,
 		feed:     feed,
-		links:    make(map[string]struct{}, 1000),
 	}
 }
 
@@ -78,7 +78,7 @@ func (s *Storage) Read() (err error) {
 	}
 
 	for _, el := range s.Items {
-		s.links[el.Link] = struct{}{}
+		s.links.Store(el.Link, struct{}{})
 	}
 
 	return
@@ -125,12 +125,10 @@ func (s *Storage) ParseFeed() (err error) {
 					if err != nil {
 						return
 					}
-					if s.notContainsLink(link) {
-						ch <- Item{
-							Title:     normalizeTitle(title),
-							Link:      normalizeLink(link),
-							Published: el.PublishedParsed.Format(time.RFC3339),
-						}
+					ch <- Item{
+						Title:     normalizeTitle(title),
+						Link:      normalizeLink(link),
+						Published: el.PublishedParsed.Format(time.RFC3339),
 					}
 				}
 			})
@@ -140,12 +138,14 @@ func (s *Storage) ParseFeed() (err error) {
 	}()
 
 	for el := range ch {
-		s.Items = append(s.Items, el)
-		s.links[el.Link] = struct{}{}
-		elPub, _ := time.Parse(time.RFC3339, el.Published)
-		sUpd, _ := time.Parse(time.RFC3339, s.Updated)
-		if elPub.After(sUpd) {
-			s.Updated = el.Published
+		if s.notContainsLink(el.Link) {
+			s.Items = append(s.Items, el)
+			s.links.Store(el.Link, struct{}{})
+			elPub, _ := time.Parse(time.RFC3339, el.Published)
+			sUpd, _ := time.Parse(time.RFC3339, s.Updated)
+			if elPub.After(sUpd) {
+				s.Updated = el.Published
+			}
 		}
 	}
 
@@ -264,7 +264,7 @@ func oneOff(k string, fields []string) bool {
 }
 
 func (s *Storage) notContainsLink(link string) bool {
-	if _, ok := s.links[link]; ok {
+	if _, ok := s.links.Load(link); ok {
 		return false
 	}
 
