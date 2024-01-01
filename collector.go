@@ -2,25 +2,27 @@ package storage
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
 	"github.com/anaskhan96/soup"
+	"github.com/gookit/color"
 	"github.com/mmcdole/gofeed"
-	"golang.org/x/sync/errgroup"
+	"github.com/sourcegraph/conc/pool"
 )
+
+const maxRequests = 100
 
 // Database is main interface for json-database
 type Database interface {
@@ -53,28 +55,28 @@ func New(feed, fileName string) *Storage {
 	return &Storage{
 		fileName: fileName,
 		feed:     feed,
+		links:    make(map[string]struct{}, 1000),
 	}
 }
 
 // Read data from fileName
 func (s *Storage) Read() (err error) {
-	if _, err = os.Stat(s.fileName); os.IsNotExist(err) {
-		fileData, err := os.Create(s.fileName)
-		if err != nil {
-			return fmt.Errorf("cannot create file `%s`: %v", s.fileName, err)
-		}
-		fileData.Close()
+	if _, err = os.Stat(s.fileName); err != nil {
 		return nil
 	}
 
 	data, err := os.ReadFile(s.fileName)
 	if err != nil {
-		return fmt.Errorf("cannot read file `%s`: %v", s.fileName, err)
+		return fmt.Errorf("cannot read file `%s`: %w", s.fileName, err)
 	}
 
-	err = json.Unmarshal(data, s)
+	if json.Valid(data) {
+		err = json.Unmarshal(data, s)
+		if err != nil {
+			return err
+		}
+	}
 
-	s.links = make(map[string]struct{})
 	for _, el := range s.Items {
 		s.links[el.Link] = struct{}{}
 	}
@@ -92,14 +94,10 @@ func (s *Storage) Write() error {
 		return err
 	}
 
-	f, err := os.Create(s.fileName)
+	err := os.WriteFile(s.fileName, buf.Bytes(), 0600)
 	if err != nil {
-		return fmt.Errorf("cannot create file `%s`: %v", s.fileName, err)
+		return fmt.Errorf("cannot create file `%s`: %w", s.fileName, err)
 	}
-	if _, err := f.Write(buf.Bytes()); err != nil {
-		return fmt.Errorf("cannot write to file `%s`: %v", s.fileName, err)
-	}
-	f.Close()
 
 	return nil
 }
@@ -107,48 +105,68 @@ func (s *Storage) Write() error {
 // ParseFeed processed feed from getpocket
 func (s *Storage) ParseFeed() (err error) {
 	fp := gofeed.NewParser()
-	fp.UserAgent = "getpocket-collector 1.0"
+	fp.UserAgent = "getpocket-collector"
 	feed, err := fp.ParseURL(s.feed)
 	if err != nil {
-		return fmt.Errorf("cannot parse feed: %v", err)
+		return fmt.Errorf("cannot parse feed: %w", err)
 	}
 
-	lastUpdate, err := time.Parse(time.RFC3339, s.Updated)
+	lastUpdate, _ := time.Parse(time.RFC3339, s.Updated)
 
+	p := pool.New().WithMaxGoroutines(maxRequests)
+	ch := make(chan Item, 1)
 	s.Title = feed.Title
-	for i := range feed.Items {
-		el := feed.Items[len(feed.Items)-i-1]
-		if lastUpdate.Before(*el.PublishedParsed) {
-			title, link, err := getURL(el.Link)
-			if err != nil {
-				s.Updated = el.PublishedParsed.Format(time.RFC3339)
-				continue
-			}
-			if s.notContainsLink(link) {
-				s.Items = append(s.Items, Item{
-					Title:     normalizeTitle(title),
-					Link:      normalizeLink(link),
-					Published: el.PublishedParsed.Format(time.RFC3339),
-				})
-				s.Updated = el.PublishedParsed.Format(time.RFC3339)
-			}
+	go func() {
+		for _, el := range feed.Items {
+			el := el
+			p.Go(func() {
+				if lastUpdate.Before(*el.PublishedParsed) {
+					title, link, err := getURL(el.Link)
+					if err != nil {
+						return
+					}
+					if s.notContainsLink(link) {
+						ch <- Item{
+							Title:     normalizeTitle(title),
+							Link:      normalizeLink(link),
+							Published: el.PublishedParsed.Format(time.RFC3339),
+						}
+					}
+				}
+			})
+		}
+		p.Wait()
+		close(ch)
+	}()
+
+	for el := range ch {
+		s.Items = append(s.Items, el)
+		s.links[el.Link] = struct{}{}
+		elPub, _ := time.Parse(time.RFC3339, el.Published)
+		sUpd, _ := time.Parse(time.RFC3339, s.Updated)
+		if elPub.After(sUpd) {
+			s.Updated = el.Published
 		}
 	}
+
+	slices.SortFunc(s.Items, func(a, b Item) int {
+		return cmp.Compare(a.Published, b.Published)
+	})
 
 	return nil
 }
 
 // Update simple function for read/parseFeed/write
 func (s *Storage) Update() (err error) {
-	if err := s.Read(); err != nil {
+	if err = s.Read(); err != nil {
 		return err
 	}
 
-	if err := s.ParseFeed(); err != nil {
+	if err = s.ParseFeed(); err != nil {
 		return err
 	}
 
-	if err := s.Write(); err != nil {
+	if err = s.Write(); err != nil {
 		return err
 	}
 
@@ -157,49 +175,48 @@ func (s *Storage) Update() (err error) {
 
 // Normalize just check all url for existing and update Title
 func (s *Storage) Normalize() (err error) {
-	if err := s.Read(); err != nil {
+	if err = s.Read(); err != nil {
 		return err
 	}
 
-	var items []Item
-	var lock sync.Mutex
-	group := errgroup.Group{}
-	group.SetLimit(20)
-	for _, item := range s.Items {
-		item := item
-		group.Go(
-			func() error {
-				fmt.Printf("check url: %s\n", item.Link)
+	items := make([]Item, 0, len(s.Items))
+	p := pool.New().WithMaxGoroutines(maxRequests)
+	ch := make(chan Item, 1)
+	go func() {
+		for _, item := range s.Items {
+			item := item
+			p.Go(func() {
+				color.Printf("check url: %s\n", item.Link)
 				title, finishURL, err := getURL(item.Link)
 				if err != nil {
-					fmt.Printf("failed: %v\n", errors.Unwrap(err))
-					return nil
+					color.Printf("failed: %v\n", errors.Unwrap(err))
+					return
 				}
-				lock.Lock()
-				items = append(items, Item{
+				ch <- Item{
 					Title:     normalizeTitle(title),
 					Link:      normalizeLink(finishURL),
 					Published: item.Published,
-				})
-				lock.Unlock()
-				return nil
+				}
 			})
+		}
+		p.Wait()
+		close(ch)
+	}()
+
+	for item := range ch {
+		items = append(items, item)
 	}
-	_ = group.Wait()
-	sort.Slice(items, sortItems(items))
+
+	slices.SortFunc(items, func(a, b Item) int {
+		return cmp.Compare(a.Published, b.Published)
+	})
 	s.Items = items
 
-	if err := s.Write(); err != nil {
+	if err = s.Write(); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func sortItems(s []Item) func(int, int) bool {
-	return func(i, j int) bool {
-		return s[i].Published < s[j].Published
-	}
 }
 
 // normalizeLink should remove all utm from query
@@ -255,22 +272,16 @@ func (s *Storage) notContainsLink(link string) bool {
 }
 
 func getURL(url string) (title, finalURL string, err error) {
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		},
-	}
-	response, err := client.Get(url)
+	client := http.Client{Timeout: time.Second}
+	request, _ := http.NewRequest("GET", url, nil)
+	request.Header.Set("User-Agent", "getpocket-collector")
+	response, err := client.Do(request)
 	if err != nil {
 		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", url, err)
 	}
-	defer response.Body.Close()
+	defer func(body io.ReadCloser) {
+		_ = body.Close()
+	}(response.Body)
 	finalURL = response.Request.URL.String()
 	if body, err := io.ReadAll(response.Body); err == nil {
 		tt := soup.HTMLParse(string(body)).Find("head").Find("title")

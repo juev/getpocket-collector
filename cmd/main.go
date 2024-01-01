@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/gookit/color"
+
 	storage "github.com/juev/getpocket-collector"
 	"github.com/juev/getpocket-collector/templates"
 )
@@ -18,14 +20,14 @@ func main() {
 
 	if normalize {
 		if err := normalizeData(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			color.Fprintf(os.Stderr, "error: %s\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		color.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
 }
