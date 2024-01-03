@@ -287,7 +287,19 @@ func getURL(addr string) (title, finalURL string, err error) {
 	request.Header.Set("User-Agent", `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`)
 	request.Header.Add("Accept", `text/html,application/xhtml+xml,application/xml`)
 
-	response, err := client.Do(request)
+	var backoffSchedule = []time.Duration{
+		200 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+	}
+	var response *http.Response
+	for _, backoff := range backoffSchedule {
+		response, err = client.Do(request)
+		if err != nil || response.StatusCode != http.StatusTooManyRequests {
+			break
+		}
+		time.Sleep(backoff)
+	}
 	if err != nil {
 		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", addr, err)
 	}
