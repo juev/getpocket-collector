@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -123,7 +122,8 @@ func (s *Storage) ParseFeed() (err error) {
 				if lastUpdate.Before(*el.PublishedParsed) {
 					title, link, err := getURL(el.Link)
 					if err != nil {
-						return
+						title = el.Title
+						link = el.Link
 					}
 					ch <- Item{
 						Title:     normalizeTitle(title),
@@ -186,10 +186,9 @@ func (s *Storage) Normalize() (err error) {
 		for _, item := range s.Items {
 			item := item
 			p.Go(func() {
-				color.Printf("check url: %s\n", item.Link)
 				title, finishURL, err := getURL(item.Link)
 				if err != nil {
-					color.Printf("failed: %v\n", errors.Unwrap(err))
+					color.Printf("failed normilize link (%s): %s\n", item.Link, err)
 					return
 				}
 				ch <- Item{
@@ -271,17 +270,33 @@ func (s *Storage) notContainsLink(link string) bool {
 	return true
 }
 
-func getURL(url string) (title, finalURL string, err error) {
-	client := http.Client{Timeout: time.Second}
-	request, _ := http.NewRequest("GET", url, nil)
-	request.Header.Set("User-Agent", "getpocket-collector")
+func getURL(addr string) (title, finalURL string, err error) {
+	parsedURL, err := url.Parse(addr)
+	if err != nil {
+		return "", "", err
+	}
+
+	if parsedURL.Hostname() == "github.com" {
+		title = `GitHub - ` + strings.TrimPrefix(parsedURL.Path, `/`)
+		finalURL = addr
+		return title, finalURL, nil
+	}
+
+	client := http.Client{Timeout: 15 * time.Second}
+	request, _ := http.NewRequest("GET", addr, nil)
+	request.Header.Set("User-Agent", `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`)
+	request.Header.Add("Accept", `text/html,application/xhtml+xml,application/xml`)
+
 	response, err := client.Do(request)
 	if err != nil {
-		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", url, err)
+		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", addr, err)
 	}
 	defer func(body io.ReadCloser) {
 		_ = body.Close()
 	}(response.Body)
+	if response.StatusCode != http.StatusOK {
+		return title, finalURL, fmt.Errorf("statusCode is %d", response.StatusCode)
+	}
 	finalURL = response.Request.URL.String()
 	if body, err := io.ReadAll(response.Body); err == nil {
 		tt := soup.HTMLParse(string(body)).Find("head").Find("title")
