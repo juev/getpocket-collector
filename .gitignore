@@ -2,5 +2,5 @@ dist
 data/
 README.md
 getpocket-collector
-data.json
+data*.json
 data-cur.json
