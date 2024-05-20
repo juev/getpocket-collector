@@ -2,59 +2,54 @@ package storage
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
-	"slices"
-	"strings"
 	"sync"
 	"time"
-	"unicode"
-
-	"github.com/anaskhan96/soup"
-	"github.com/gookit/color"
-	"github.com/mmcdole/gofeed"
-	"github.com/sourcegraph/conc/pool"
 )
 
 const maxRequests = 100
 
-// Database is main interface for json-database
-type Database interface {
-	Read() error
-	Write() error
-	ParseFeed() error
-	Update() error
-	Normalize() error
-}
-
-// Storage is struct for storing feed info
+// Storage is struct for storing getpocket items
 type Storage struct {
-	Title    string `json:"title"`
-	Updated  string `json:"updated"`
-	Items    []Item `json:"items"`
-	fileName string
-	feed     string
-	links    sync.Map
+	Title       string        `json:"title"`
+	Updated     string        `json:"updated"`
+	Items       []StorageItem `json:"items"`
+	fileName    string
+	consumerKey string
+	accessToken string
+	since       string
+	links       sync.Map
 }
 
-// Item one link from feed
-type Item struct {
+// StorageItem one link from feed
+type StorageItem struct {
 	Title     string `json:"title"`
 	Link      string `json:"link"`
+	Excerpt   string `json:"excerpt"`
 	Published string `json:"published"`
 }
 
+type PocketJson struct {
+	List  map[string]Item `json:"list"`
+	Error error           `json:"error"`
+}
+
+type Item struct {
+	Title   string `json:"resolved_title"`
+	URL     string `json:"resolved_url"`
+	Excerpt string `json:"excerpt"`
+}
+
 // New creates new storage
-func New(feed, fileName string) *Storage {
+func New(fileName, consumerKey, accessToken string) *Storage {
 	return &Storage{
-		fileName: fileName,
-		feed:     feed,
+		fileName:    fileName,
+		consumerKey: consumerKey,
+		accessToken: accessToken,
 	}
 }
 
@@ -101,165 +96,50 @@ func (s *Storage) Write() error {
 	return nil
 }
 
-// ParseFeed processed feed from getpocket
-func (s *Storage) ParseFeed() (err error) {
-	fp := gofeed.NewParser()
-	fp.UserAgent = "getpocket-collector"
-	feed, err := fp.ParseURL(s.feed)
-	if err != nil {
-		return fmt.Errorf("cannot parse feed: %w", err)
+// PocketParse processed feed from getpocket
+func (s *Storage) PocketParse(bodyBytes []byte) (err error) {
+	var pocketJson PocketJson
+
+	fmt.Println(string(bodyBytes))
+
+	if err := json.Unmarshal(bodyBytes, &pocketJson); err != nil {
+		return fmt.Errorf("failed to unmarchal response from getpocket: %w", err)
 	}
 
-	lastUpdate, _ := time.Parse(time.RFC3339, s.Updated)
-
-	p := pool.New().WithMaxGoroutines(maxRequests)
-	ch := make(chan Item, 1)
-	s.Title = feed.Title
-	go func() {
-		for _, el := range feed.Items {
-			el := el
-			p.Go(func() {
-				if lastUpdate.Before(*el.PublishedParsed) {
-					title, link, err := getURL(el.Link)
-					if err != nil {
-						title = el.Title
-						link = el.Link
-					}
-					ch <- Item{
-						Title:     normalizeTitle(title),
-						Link:      normalizeLink(link),
-						Published: el.PublishedParsed.Format(time.RFC3339),
-					}
-				}
+	for _, el := range pocketJson.List {
+		if s.notContainsLink(el.URL) {
+			s.Items = append(s.Items, StorageItem{
+				Title:   el.Title,
+				Link:    el.URL,
+				Excerpt: el.Excerpt,
 			})
-		}
-		p.Wait()
-		close(ch)
-	}()
-
-	for el := range ch {
-		if s.notContainsLink(el.Link) {
-			s.Items = append(s.Items, el)
-			s.links.Store(el.Link, struct{}{})
-			elPub, _ := time.Parse(time.RFC3339, el.Published)
-			sUpd, _ := time.Parse(time.RFC3339, s.Updated)
-			if elPub.After(sUpd) {
-				s.Updated = el.Published
-			}
+			s.links.Store(el.URL, struct{}{})
 		}
 	}
-
-	slices.SortFunc(s.Items, func(a, b Item) int {
-		return cmp.Compare(a.Published, b.Published)
-	})
 
 	return nil
 }
 
 // Update simple function for read/parseFeed/write
-func (s *Storage) Update() (err error) {
-	if err = s.Read(); err != nil {
+func (s *Storage) Update() error {
+	if err := s.Read(); err != nil {
 		return err
 	}
 
-	if err = s.ParseFeed(); err != nil {
-		return err
-	}
-
-	if err = s.Write(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Normalize just check all url for existing and update Title
-func (s *Storage) Normalize() (err error) {
-	if err = s.Read(); err != nil {
-		return err
-	}
-
-	items := make([]Item, 0, len(s.Items))
-	p := pool.New().WithMaxGoroutines(maxRequests)
-	ch := make(chan Item, 1)
-	go func() {
-		for _, item := range s.Items {
-			item := item
-			p.Go(func() {
-				title, finishURL, err := getURL(item.Link)
-				if err != nil {
-					color.Printf("failed normilize link (%s): %s\n", item.Link, err)
-					return
-				}
-				ch <- Item{
-					Title:     normalizeTitle(title),
-					Link:      normalizeLink(finishURL),
-					Published: item.Published,
-				}
-			})
-		}
-		p.Wait()
-		close(ch)
-	}()
-
-	for item := range ch {
-		items = append(items, item)
-	}
-
-	slices.SortFunc(items, func(a, b Item) int {
-		return cmp.Compare(a.Published, b.Published)
-	})
-	s.Items = items
-
-	if err = s.Write(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// normalizeLink should remove all utm from query
-func normalizeLink(in string) string {
-	u, err := url.Parse(in)
+	bodyBytes, err := s.requestToPocket()
 	if err != nil {
-		return in
+		return err
 	}
 
-	query := url.Values{}
-	for key, value := range u.Query() {
-		if oneOff(key, []string{"v", "p", "id", "article"}) {
-			for _, v := range value {
-				query.Add(key, v)
-			}
-		}
-	}
-	u.RawQuery = query.Encode()
-	return u.String()
-}
-
-// normalizeTitle unescapes entities like "&lt;" to become "<"
-func normalizeTitle(in string) string {
-	in = html.UnescapeString(in)
-	in = strings.Map(func(r rune) rune {
-		if unicode.IsPrint(r) {
-			return r
-		}
-		return -1
-	}, in)
-
-	in = strings.ReplaceAll(in, "  ", " ")
-	in = strings.TrimSpace(in)
-	return in
-}
-
-func oneOff(k string, fields []string) bool {
-	for _, el := range fields {
-		if k == el {
-			return true
-		}
+	if err := s.PocketParse(bodyBytes); err != nil {
+		return err
 	}
 
-	return false
+	if err := s.Write(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *Storage) notContainsLink(link string) bool {
@@ -270,56 +150,33 @@ func (s *Storage) notContainsLink(link string) bool {
 	return true
 }
 
-func getURL(addr string) (title, finalURL string, err error) {
-	parsedURL, err := url.Parse(addr)
+func (s *Storage) requestToPocket() (bodyBytes []byte, err error) {
+	req, _ := http.NewRequest(http.MethodGet, "https://getpocket.com/v3/get", nil)
+
+	q := req.URL.Query()
+	q.Add("consumer_key", s.consumerKey)
+	q.Add("access_token", s.accessToken)
+	q.Add("since", s.since)
+	req.URL.RawQuery = q.Encode()
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", err
+		return nil, fmt.Errorf("failed to make request to getpocket: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to make request to getpocket: got status %s", resp.Status)
 	}
 
-	if parsedURL.Hostname() == "github.com" {
-		title = `GitHub - ` + strings.TrimPrefix(parsedURL.Path, `/`)
-		finalURL = addr
-		return title, finalURL, nil
-	}
-
-	client := http.Client{Timeout: 15 * time.Second}
-	request, _ := http.NewRequest("GET", addr, nil)
-	request.Header.Set("User-Agent", `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`)
-	request.Header.Add("Accept", `text/html,application/xhtml+xml,application/xml`)
-
-	var backoffSchedule = []time.Duration{
-		200 * time.Millisecond,
-		500 * time.Millisecond,
-		1 * time.Second,
-	}
-	var response *http.Response
-	for _, backoff := range backoffSchedule {
-		response, err = client.Do(request)
-		if err != nil || response.StatusCode != http.StatusTooManyRequests {
-			break
-		}
-		time.Sleep(backoff)
-	}
+	bodyBytes, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", addr, err)
-	}
-	defer func(body io.ReadCloser) {
-		_ = body.Close()
-	}(response.Body)
-	if response.StatusCode != http.StatusOK {
-		return title, finalURL, fmt.Errorf("statusCode is %d", response.StatusCode)
-	}
-	finalURL = response.Request.URL.String()
-	if body, err := io.ReadAll(response.Body); err == nil {
-		tt := soup.HTMLParse(string(body)).Find("head").Find("title")
-		if tt.Pointer != nil {
-			title = tt.Text()
-		}
+		return nil, fmt.Errorf("failed to read body: %w", err)
 	}
 
-	if title == "" {
-		title = "Untitled"
-	}
-
-	return title, finalURL, nil
+	return bodyBytes, nil
 }
