@@ -34,6 +34,11 @@ type StorageItem struct {
 	Published string `json:"published,omitempty"`
 }
 
+type PocketJsonEmpty struct {
+	List  []any `json:"list"`
+	Error error `json:"error"`
+}
+
 type PocketJson struct {
 	List  map[string]PocketJsonItem `json:"list"`
 	Error error                     `json:"error"`
@@ -109,7 +114,16 @@ func (s *Storage) Write() error {
 
 // PocketParse processed feed from getpocket
 func (s *Storage) PocketParse(bodyBytes []byte) (err error) {
+	var pocketJsonTest PocketJsonEmpty
 	var pocketJson PocketJson
+
+	// проверка на пустой массив в ответе
+	if err := json.Unmarshal(bodyBytes, &pocketJsonTest); err == nil {
+		if pocketJsonTest.Error != nil {
+			return pocketJsonTest.Error
+		}
+		return nil
+	}
 
 	if err := json.Unmarshal(bodyBytes, &pocketJson); err != nil {
 		return fmt.Errorf("failed to unmarchal response from getpocket: %w", err)
