@@ -5,19 +5,15 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"html"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
-	"unicode"
-
-	"github.com/imroc/req/v3"
 )
-
-const maxRequests = 100
 
 // Storage is struct for storing getpocket items
 type Storage struct {
@@ -31,17 +27,23 @@ type Storage struct {
 	links       sync.Map
 }
 
-// StorageItem one link from feed
+// StorageItem one link from getpocket
 type StorageItem struct {
-	Title     string `json:"resolved_title"`
-	Link      string `json:"resolved_url"`
-	Excerpt   string `json:"excerpt"`
-	Published string `json:"time_added"`
+	Title     string `json:"title,omitempty"`
+	Link      string `json:"link,omitempty"`
+	Published string `json:"published,omitempty"`
 }
 
 type PocketJson struct {
-	List  map[string]StorageItem `json:"list"`
-	Error error                  `json:"error"`
+	List  map[string]PocketJsonItem `json:"list"`
+	Error error                     `json:"error"`
+	Since int64                     `json:"since"`
+}
+
+type PocketJsonItem struct {
+	Title     string `json:"resolved_title"`
+	Link      string `json:"resolved_url"`
+	Published string `json:"time_added"`
 }
 
 // New creates new storage
@@ -75,7 +77,14 @@ func (s *Storage) Read() (err error) {
 		s.links.Store(el.Link, struct{}{})
 	}
 
-	s.since = s.Updated
+	if s.Updated != "" {
+		t, err := time.Parse(time.RFC3339, s.Updated)
+		if err != nil {
+			return err
+		}
+
+		s.since = strconv.FormatInt(t.Unix(), 10)
+	}
 
 	return
 }
@@ -106,6 +115,10 @@ func (s *Storage) PocketParse(bodyBytes []byte) (err error) {
 		return fmt.Errorf("failed to unmarchal response from getpocket: %w", err)
 	}
 
+	if pocketJson.Error != nil {
+		return pocketJson.Error
+	}
+
 	s.Title = "My Reading List: Unread"
 	for _, el := range pocketJson.List {
 		if s.notContainsLink(el.Link) {
@@ -118,7 +131,6 @@ func (s *Storage) PocketParse(bodyBytes []byte) (err error) {
 			s.Items = append(s.Items, StorageItem{
 				Title:     el.Title,
 				Link:      el.Link,
-				Excerpt:   normalizeExcerpt(el.Excerpt),
 				Published: time.Unix(d, 0).Format(time.RFC3339),
 			})
 			s.links.Store(el.Link, struct{}{})
@@ -129,7 +141,7 @@ func (s *Storage) PocketParse(bodyBytes []byte) (err error) {
 		return cmp.Compare(a.Published, b.Published)
 	})
 
-	s.Updated = time.Unix(time.Now().Unix(), 0).Format(time.RFC3339)
+	s.Updated = time.Unix(pocketJson.Since, 0).Format(time.RFC3339)
 
 	return nil
 }
@@ -140,28 +152,38 @@ func (s *Storage) Update() error {
 		return err
 	}
 
-	client := req.C().
-		SetUserAgent("getpocket-collector").
-		SetTimeout(15 * time.Second)
+	request, _ := http.NewRequest(http.MethodGet, "https://getpocket.com/v3/get", nil)
+	request.Header.Set("User-Agent", `getpocket-collector`)
 
-	response, err := client.R().
-		SetQueryParams(map[string]string{
-			"consumer_key": s.consumerKey,
-			"access_token": s.accessToken,
-			"since":        s.since,
-		}).
-		Get("https://getpocket.com/v3/get")
+	values := url.Values{}
+	values.Add("consumer_key", s.consumerKey)
+	values.Add("access_token", s.accessToken)
+	if s.since != "" {
+		values.Add("since", s.since)
+	}
 
+	request.URL.RawQuery = values.Encode()
+
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return err
 	}
+	defer response.Body.Close()
 
-	fmt.Println(response.String())
-	if err := s.PocketParse(response.Bytes()); err != nil {
+	if response.StatusCode != 200 {
+		return fmt.Errorf("status code: %d", response.StatusCode)
+	}
+
+	var body []byte
+	if body, err = io.ReadAll(response.Body); err != nil {
 		return err
 	}
 
-	if err := s.Write(); err != nil {
+	if err = s.PocketParse(body); err != nil {
+		return err
+	}
+
+	if err = s.Write(); err != nil {
 		return err
 	}
 
@@ -174,19 +196,4 @@ func (s *Storage) notContainsLink(link string) bool {
 	}
 
 	return true
-}
-
-// normalizeExcerpt unescapes entities like "&lt;" to become "<"
-func normalizeExcerpt(in string) string {
-	in = html.UnescapeString(in)
-	in = strings.Map(func(r rune) rune {
-		if unicode.IsPrint(r) {
-			return r
-		}
-		return -1
-	}, in)
-
-	in = strings.ReplaceAll(in, "  ", " ")
-	in = strings.TrimSpace(in)
-	return in
 }

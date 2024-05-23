@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/gookit/color"
-
 	storage "github.com/juev/getpocket-collector"
 	"github.com/juev/getpocket-collector/templates"
 )
@@ -14,7 +12,7 @@ const storageFile = "data.json"
 
 func main() {
 	if err := run(); err != nil {
-		color.Fprintf(os.Stderr, "error: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
 }
