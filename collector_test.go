@@ -11,9 +11,9 @@ func TestStorage_PocketParse(t *testing.T) {
 		t.Errorf("cannot read file")
 	}
 
-	s := &Storage{}
+	s := &Collector{}
 
 	if err := s.PocketParse(data); err != nil {
-		t.Errorf("Storage.PocketParse() error = %v", err)
+		t.Errorf("Collector.PocketParse() error = %v", err)
 	}
 }

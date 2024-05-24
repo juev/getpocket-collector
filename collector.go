@@ -15,11 +15,11 @@ import (
 	"time"
 )
 
-// Storage is struct for storing getpocket items
-type Storage struct {
-	Title       string        `json:"title"`
-	Updated     string        `json:"updated"`
-	Items       []StorageItem `json:"items"`
+// Collector is struct for storing getpocket items
+type Collector struct {
+	Title       string `json:"title"`
+	Updated     string `json:"updated"`
+	Items       []Item `json:"items"`
 	fileName    string
 	consumerKey string
 	accessToken string
@@ -27,33 +27,36 @@ type Storage struct {
 	links       sync.Map
 }
 
-// StorageItem one link from getpocket
-type StorageItem struct {
+// Item one link from getpocket
+type Item struct {
 	Title     string `json:"title,omitempty"`
 	Link      string `json:"link,omitempty"`
 	Published string `json:"published,omitempty"`
 }
 
-type PocketJsonEmpty struct {
+// PocketJSONEmpty to check an empty structure
+type PocketJSONEmpty struct {
 	List  []any `json:"list"`
 	Error error `json:"error"`
 }
 
-type PocketJson struct {
-	List  map[string]PocketJsonItem `json:"list"`
+// PocketJSON to store response from the getpocket api
+type PocketJSON struct {
+	List  map[string]PocketJSONItem `json:"list"`
 	Error error                     `json:"error"`
 	Since int64                     `json:"since"`
 }
 
-type PocketJsonItem struct {
+// PocketJSONItem to store an element from the getpocket api
+type PocketJSONItem struct {
 	Title     string `json:"resolved_title"`
 	Link      string `json:"resolved_url"`
 	Published string `json:"time_added"`
 }
 
 // New creates new storage
-func New(fileName, consumerKey, accessToken string) *Storage {
-	return &Storage{
+func New(fileName, consumerKey, accessToken string) *Collector {
+	return &Collector{
 		fileName:    fileName,
 		consumerKey: consumerKey,
 		accessToken: accessToken,
@@ -61,7 +64,7 @@ func New(fileName, consumerKey, accessToken string) *Storage {
 }
 
 // Read data from fileName
-func (s *Storage) Read() (err error) {
+func (s *Collector) Read() (err error) {
 	if _, err = os.Stat(s.fileName); err != nil {
 		return nil
 	}
@@ -95,7 +98,7 @@ func (s *Storage) Read() (err error) {
 }
 
 // Write for write data to fileName
-func (s *Storage) Write() error {
+func (s *Collector) Write() error {
 	var buf bytes.Buffer
 	dec := json.NewEncoder(&buf)
 	dec.SetIndent("", "    ")
@@ -113,28 +116,28 @@ func (s *Storage) Write() error {
 }
 
 // PocketParse processed feed from getpocket
-func (s *Storage) PocketParse(bodyBytes []byte) (err error) {
-	var pocketJsonTest PocketJsonEmpty
-	var pocketJson PocketJson
+func (s *Collector) PocketParse(bodyBytes []byte) (err error) {
+	var pocketJSONTest PocketJSONEmpty
+	var pocketJSON PocketJSON
 
 	// проверка на пустой массив в ответе
-	if err := json.Unmarshal(bodyBytes, &pocketJsonTest); err == nil {
-		if pocketJsonTest.Error != nil {
-			return pocketJsonTest.Error
+	if err := json.Unmarshal(bodyBytes, &pocketJSONTest); err == nil {
+		if pocketJSONTest.Error != nil {
+			return pocketJSONTest.Error
 		}
 		return nil
 	}
 
-	if err := json.Unmarshal(bodyBytes, &pocketJson); err != nil {
+	if err := json.Unmarshal(bodyBytes, &pocketJSON); err != nil {
 		return fmt.Errorf("failed to unmarchal response from getpocket: %w", err)
 	}
 
-	if pocketJson.Error != nil {
-		return pocketJson.Error
+	if pocketJSON.Error != nil {
+		return pocketJSON.Error
 	}
 
 	s.Title = "My Reading List: Unread"
-	for _, el := range pocketJson.List {
+	for _, el := range pocketJSON.List {
 		if s.notContainsLink(el.Link) {
 			// convert time
 			d, _ := strconv.ParseInt(el.Published, 10, 64)
@@ -142,7 +145,7 @@ func (s *Storage) PocketParse(bodyBytes []byte) (err error) {
 			if el.Title == "" {
 				el.Title = "Untitled"
 			}
-			s.Items = append(s.Items, StorageItem{
+			s.Items = append(s.Items, Item{
 				Title:     el.Title,
 				Link:      el.Link,
 				Published: time.Unix(d, 0).Format(time.RFC3339),
@@ -151,17 +154,17 @@ func (s *Storage) PocketParse(bodyBytes []byte) (err error) {
 		}
 	}
 
-	slices.SortFunc(s.Items, func(a, b StorageItem) int {
+	slices.SortFunc(s.Items, func(a, b Item) int {
 		return cmp.Compare(a.Published, b.Published)
 	})
 
-	s.Updated = time.Unix(pocketJson.Since, 0).Format(time.RFC3339)
+	s.Updated = time.Unix(pocketJSON.Since, 0).Format(time.RFC3339)
 
 	return nil
 }
 
 // Update simple function for read/parseFeed/write
-func (s *Storage) Update() error {
+func (s *Collector) Update() error {
 	if err := s.Read(); err != nil {
 		return err
 	}
@@ -204,7 +207,7 @@ func (s *Storage) Update() error {
 	return nil
 }
 
-func (s *Storage) notContainsLink(link string) bool {
+func (s *Collector) notContainsLink(link string) bool {
 	if _, ok := s.links.Load(link); ok {
 		return false
 	}

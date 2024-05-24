@@ -19,11 +19,11 @@ var templateString string
 type Data struct {
 	Title    string
 	UserName string
-	Content  *storage.Storage
+	Content  *storage.Collector
 	Count    int
 }
 
-func TemplateFile(s *storage.Storage, userName string) (err error) {
+func TemplateFile(s *storage.Collector, userName string) (err error) {
 	temp, err := template.New("links").Parse(templateString)
 	if err != nil {
 		return err
@@ -36,7 +36,7 @@ func TemplateFile(s *storage.Storage, userName string) (err error) {
 	r := Data{
 		UserName: userName,
 	}
-	weekItems := &storage.Storage{
+	weekItems := &storage.Collector{
 		Title: s.Title,
 	}
 	for _, item := range s.Items {
@@ -52,7 +52,7 @@ func TemplateFile(s *storage.Storage, userName string) (err error) {
 				writeTemplate(&r, weekNumber, weekItems, temp)
 			}
 			weekNumber = currentWeek
-			weekItems.Items = []storage.StorageItem{}
+			weekItems.Items = []storage.Item{}
 		}
 		weekItems.Items = append(weekItems.Items, item)
 	}
@@ -66,7 +66,7 @@ func TemplateFile(s *storage.Storage, userName string) (err error) {
 	return nil
 }
 
-func writeTemplate(r *Data, weekNumber string, weekItems *storage.Storage, temp *template.Template) (err error) {
+func writeTemplate(r *Data, weekNumber string, weekItems *storage.Collector, temp *template.Template) (err error) {
 	r.Title = weekNumber
 	r.Content = weekItems
 	fileName := "data/" + weekNumber + ".md"
