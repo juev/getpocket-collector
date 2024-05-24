@@ -37,7 +37,8 @@ jobs:
         name: 🚀 Run Automation
         run: getpocket-collector
         env:
-          GETPOCKET_FEED_URL: "https://getpocket.com/users/juev/feed/all"
+          CONSUMER_KEY: ${{ secrets.CONSUMER_KEY}}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
           USERNAME: "juev"
       - 
         name: 🐳 Commit
