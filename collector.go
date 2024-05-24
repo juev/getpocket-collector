@@ -5,61 +5,66 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"slices"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
-	"unicode"
-
-	"github.com/anaskhan96/soup"
-	"github.com/gookit/color"
-	"github.com/mmcdole/gofeed"
-	"github.com/sourcegraph/conc/pool"
 )
 
-const maxRequests = 100
-
-// Database is main interface for json-database
-type Database interface {
-	Read() error
-	Write() error
-	ParseFeed() error
-	Update() error
-	Normalize() error
+// Collector is struct for storing getpocket items
+type Collector struct {
+	Title       string `json:"title"`
+	Updated     string `json:"updated"`
+	Items       []Item `json:"items"`
+	fileName    string
+	consumerKey string
+	accessToken string
+	since       string
+	links       sync.Map
 }
 
-// Storage is struct for storing feed info
-type Storage struct {
-	Title    string `json:"title"`
-	Updated  string `json:"updated"`
-	Items    []Item `json:"items"`
-	fileName string
-	feed     string
-	links    sync.Map
-}
-
-// Item one link from feed
+// Item one link from getpocket
 type Item struct {
-	Title     string `json:"title"`
-	Link      string `json:"link"`
-	Published string `json:"published"`
+	Title     string `json:"title,omitempty"`
+	Link      string `json:"link,omitempty"`
+	Published string `json:"published,omitempty"`
+}
+
+// PocketJSONEmpty to check an empty structure
+type PocketJSONEmpty struct {
+	List  []any `json:"list"`
+	Error error `json:"error"`
+}
+
+// PocketJSON to store response from the getpocket api
+type PocketJSON struct {
+	List  map[string]PocketJSONItem `json:"list"`
+	Error error                     `json:"error"`
+	Since int64                     `json:"since"`
+}
+
+// PocketJSONItem to store an element from the getpocket api
+type PocketJSONItem struct {
+	Title     string `json:"resolved_title"`
+	Link      string `json:"resolved_url"`
+	Published string `json:"time_added"`
 }
 
 // New creates new storage
-func New(feed, fileName string) *Storage {
-	return &Storage{
-		fileName: fileName,
-		feed:     feed,
+func New(fileName, consumerKey, accessToken string) *Collector {
+	return &Collector{
+		fileName:    fileName,
+		consumerKey: consumerKey,
+		accessToken: accessToken,
 	}
 }
 
 // Read data from fileName
-func (s *Storage) Read() (err error) {
+func (s *Collector) Read() (err error) {
 	if _, err = os.Stat(s.fileName); err != nil {
 		return nil
 	}
@@ -80,11 +85,20 @@ func (s *Storage) Read() (err error) {
 		s.links.Store(el.Link, struct{}{})
 	}
 
+	if s.Updated != "" {
+		t, err := time.Parse(time.RFC3339, s.Updated)
+		if err != nil {
+			return err
+		}
+
+		s.since = strconv.FormatInt(t.Unix(), 10)
+	}
+
 	return
 }
 
 // Write for write data to fileName
-func (s *Storage) Write() error {
+func (s *Collector) Write() error {
 	var buf bytes.Buffer
 	dec := json.NewEncoder(&buf)
 	dec.SetIndent("", "    ")
@@ -101,51 +115,42 @@ func (s *Storage) Write() error {
 	return nil
 }
 
-// ParseFeed processed feed from getpocket
-func (s *Storage) ParseFeed() (err error) {
-	fp := gofeed.NewParser()
-	fp.UserAgent = "getpocket-collector"
-	feed, err := fp.ParseURL(s.feed)
-	if err != nil {
-		return fmt.Errorf("cannot parse feed: %w", err)
+// PocketParse processed feed from getpocket
+func (s *Collector) PocketParse(bodyBytes []byte) (err error) {
+	var pocketJSONTest PocketJSONEmpty
+	var pocketJSON PocketJSON
+
+	// проверка на пустой массив в ответе
+	if err := json.Unmarshal(bodyBytes, &pocketJSONTest); err == nil {
+		if pocketJSONTest.Error != nil {
+			return pocketJSONTest.Error
+		}
+		return nil
 	}
 
-	lastUpdate, _ := time.Parse(time.RFC3339, s.Updated)
+	if err := json.Unmarshal(bodyBytes, &pocketJSON); err != nil {
+		return fmt.Errorf("failed to unmarchal response from getpocket: %w", err)
+	}
 
-	p := pool.New().WithMaxGoroutines(maxRequests)
-	ch := make(chan Item, 1)
-	s.Title = feed.Title
-	go func() {
-		for _, el := range feed.Items {
-			el := el
-			p.Go(func() {
-				if lastUpdate.Before(*el.PublishedParsed) {
-					title, link, err := getURL(el.Link)
-					if err != nil {
-						title = el.Title
-						link = el.Link
-					}
-					ch <- Item{
-						Title:     normalizeTitle(title),
-						Link:      normalizeLink(link),
-						Published: el.PublishedParsed.Format(time.RFC3339),
-					}
-				}
-			})
-		}
-		p.Wait()
-		close(ch)
-	}()
+	if pocketJSON.Error != nil {
+		return pocketJSON.Error
+	}
 
-	for el := range ch {
+	s.Title = "My Reading List: Unread"
+	for _, el := range pocketJSON.List {
 		if s.notContainsLink(el.Link) {
-			s.Items = append(s.Items, el)
-			s.links.Store(el.Link, struct{}{})
-			elPub, _ := time.Parse(time.RFC3339, el.Published)
-			sUpd, _ := time.Parse(time.RFC3339, s.Updated)
-			if elPub.After(sUpd) {
-				s.Updated = el.Published
+			// convert time
+			d, _ := strconv.ParseInt(el.Published, 10, 64)
+			// convert empty title
+			if el.Title == "" {
+				el.Title = "Untitled"
 			}
+			s.Items = append(s.Items, Item{
+				Title:     el.Title,
+				Link:      el.Link,
+				Published: time.Unix(d, 0).Format(time.RFC3339),
+			})
+			s.links.Store(el.Link, struct{}{})
 		}
 	}
 
@@ -153,173 +158,59 @@ func (s *Storage) ParseFeed() (err error) {
 		return cmp.Compare(a.Published, b.Published)
 	})
 
+	s.Updated = time.Unix(pocketJSON.Since, 0).Format(time.RFC3339)
+
 	return nil
 }
 
 // Update simple function for read/parseFeed/write
-func (s *Storage) Update() (err error) {
-	if err = s.Read(); err != nil {
+func (s *Collector) Update() error {
+	if err := s.Read(); err != nil {
 		return err
 	}
 
-	if err = s.ParseFeed(); err != nil {
-		return err
+	request, _ := http.NewRequest(http.MethodGet, "https://getpocket.com/v3/get", nil)
+	request.Header.Set("User-Agent", `getpocket-collector`)
+
+	values := url.Values{}
+	values.Add("consumer_key", s.consumerKey)
+	values.Add("access_token", s.accessToken)
+	if s.since != "" {
+		values.Add("since", s.since)
 	}
 
-	if err = s.Write(); err != nil {
-		return err
-	}
+	request.URL.RawQuery = values.Encode()
 
-	return nil
-}
-
-// Normalize just check all url for existing and update Title
-func (s *Storage) Normalize() (err error) {
-	if err = s.Read(); err != nil {
-		return err
-	}
-
-	items := make([]Item, 0, len(s.Items))
-	p := pool.New().WithMaxGoroutines(maxRequests)
-	ch := make(chan Item, 1)
-	go func() {
-		for _, item := range s.Items {
-			item := item
-			p.Go(func() {
-				title, finishURL, err := getURL(item.Link)
-				if err != nil {
-					color.Printf("failed normilize link (%s): %s\n", item.Link, err)
-					return
-				}
-				ch <- Item{
-					Title:     normalizeTitle(title),
-					Link:      normalizeLink(finishURL),
-					Published: item.Published,
-				}
-			})
-		}
-		p.Wait()
-		close(ch)
-	}()
-
-	for item := range ch {
-		items = append(items, item)
-	}
-
-	slices.SortFunc(items, func(a, b Item) int {
-		return cmp.Compare(a.Published, b.Published)
-	})
-	s.Items = items
-
-	if err = s.Write(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// normalizeLink should remove all utm from query
-func normalizeLink(in string) string {
-	u, err := url.Parse(in)
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		return in
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != 200 {
+		return fmt.Errorf("status code: %d", response.StatusCode)
 	}
 
-	query := url.Values{}
-	for key, value := range u.Query() {
-		if oneOff(key, []string{"v", "p", "id", "article"}) {
-			for _, v := range value {
-				query.Add(key, v)
-			}
-		}
-	}
-	u.RawQuery = query.Encode()
-	return u.String()
-}
-
-// normalizeTitle unescapes entities like "&lt;" to become "<"
-func normalizeTitle(in string) string {
-	in = html.UnescapeString(in)
-	in = strings.Map(func(r rune) rune {
-		if unicode.IsPrint(r) {
-			return r
-		}
-		return -1
-	}, in)
-
-	in = strings.ReplaceAll(in, "  ", " ")
-	in = strings.TrimSpace(in)
-	return in
-}
-
-func oneOff(k string, fields []string) bool {
-	for _, el := range fields {
-		if k == el {
-			return true
-		}
+	var body []byte
+	if body, err = io.ReadAll(response.Body); err != nil {
+		return err
 	}
 
-	return false
+	if err = s.PocketParse(body); err != nil {
+		return err
+	}
+
+	if err = s.Write(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (s *Storage) notContainsLink(link string) bool {
+func (s *Collector) notContainsLink(link string) bool {
 	if _, ok := s.links.Load(link); ok {
 		return false
 	}
 
 	return true
-}
-
-func getURL(addr string) (title, finalURL string, err error) {
-	parsedURL, err := url.Parse(addr)
-	if err != nil {
-		return "", "", err
-	}
-
-	if parsedURL.Hostname() == "github.com" {
-		title = `GitHub - ` + strings.TrimPrefix(parsedURL.Path, `/`)
-		finalURL = addr
-		return title, finalURL, nil
-	}
-
-	client := http.Client{Timeout: 15 * time.Second}
-	request, _ := http.NewRequest("GET", addr, nil)
-	request.Header.Set("User-Agent", `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`)
-	request.Header.Add("Accept", `text/html,application/xhtml+xml,application/xml`)
-
-	var backoffSchedule = []time.Duration{
-		200 * time.Millisecond,
-		500 * time.Millisecond,
-		1 * time.Second,
-	}
-	var response *http.Response
-	for _, backoff := range backoffSchedule {
-		response, err = client.Do(request)
-		if err != nil || response.StatusCode != http.StatusTooManyRequests {
-			break
-		}
-		time.Sleep(backoff)
-	}
-	if err != nil {
-		return title, finalURL, fmt.Errorf("cannot fetch url (%s): %w", addr, err)
-	}
-	defer func(body io.ReadCloser) {
-		_ = body.Close()
-	}(response.Body)
-	if response.StatusCode != http.StatusOK {
-		return title, finalURL, fmt.Errorf("statusCode is %d", response.StatusCode)
-	}
-	finalURL = response.Request.URL.String()
-	if body, err := io.ReadAll(response.Body); err == nil {
-		tt := soup.HTMLParse(string(body)).Find("head").Find("title")
-		if tt.Pointer != nil {
-			title = tt.Text()
-		}
-	}
-
-	if title == "" {
-		title = "Untitled"
-	}
-
-	return title, finalURL, nil
 }

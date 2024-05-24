@@ -19,11 +19,11 @@ var templateString string
 type Data struct {
 	Title    string
 	UserName string
-	Content  storage.Database
+	Content  *storage.Collector
 	Count    int
 }
 
-func TemplateFile(s *storage.Storage, userName string) (err error) {
+func TemplateFile(s *storage.Collector, userName string) (err error) {
 	temp, err := template.New("links").Parse(templateString)
 	if err != nil {
 		return err
@@ -36,7 +36,7 @@ func TemplateFile(s *storage.Storage, userName string) (err error) {
 	r := Data{
 		UserName: userName,
 	}
-	weekItems := storage.Storage{
+	weekItems := &storage.Collector{
 		Title: s.Title,
 	}
 	for _, item := range s.Items {
@@ -49,7 +49,7 @@ func TemplateFile(s *storage.Storage, userName string) (err error) {
 		currentWeek = fmt.Sprintf("%d-%d", year, week)
 		if weekNumber != currentWeek {
 			if weekNumber != "" {
-				writeTemplate(r, weekNumber, weekItems, temp)
+				writeTemplate(&r, weekNumber, weekItems, temp)
 			}
 			weekNumber = currentWeek
 			weekItems.Items = []storage.Item{}
@@ -57,18 +57,18 @@ func TemplateFile(s *storage.Storage, userName string) (err error) {
 		weekItems.Items = append(weekItems.Items, item)
 	}
 
-	writeTemplate(r, weekNumber, weekItems, temp)
+	writeTemplate(&r, weekNumber, weekItems, temp)
 
 	// Update README.md
 	r.Count = len(s.Items)
-	writeTemplate(r, "", weekItems, temp)
+	writeTemplate(&r, "", weekItems, temp)
 
 	return nil
 }
 
-func writeTemplate(r Data, weekNumber string, weekItems storage.Storage, temp *template.Template) (err error) {
+func writeTemplate(r *Data, weekNumber string, weekItems *storage.Collector, temp *template.Template) (err error) {
 	r.Title = weekNumber
-	r.Content = &weekItems
+	r.Content = weekItems
 	fileName := "data/" + weekNumber + ".md"
 
 	if weekNumber == "" {

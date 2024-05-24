@@ -6,14 +6,14 @@ Work example: [juev/links](https://github.com/juev/links)
 
 ## How to use
 
-You can create new ENV variables:
+1. Create an application on the page [getpocket.com/developer/apps](https://getpocket.com/developer/apps/). Here you will get the `consumer_key`.
+2. Creating a token on the page [Authenticate Pocket 30](https://reader.fxneumann.de/plugins/oneclickpocket/auth.php).
 
-- `GETPOCKET_FEED_URL` for storing your RSS-feed from getpocket. This feed should be unprotected.
+These values must be stored in the environment variables:
+
+- `CONSUMER_KEY` to store the consumer_key
+- `ACCESS_TOKEN` to store the access_token 
 - `USERNAME` for storing username in LICENSE information. Default value: "juev"
-
-Reference:
-
-- [Can I subscribe to my list via RSS?](https://help.getpocket.com/article/1074-can-i-subscribe-to-my-list-via-rss)
 
 ## Github action
 

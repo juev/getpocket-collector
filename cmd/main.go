@@ -1,11 +1,8 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
-
-	"github.com/gookit/color"
 
 	storage "github.com/juev/getpocket-collector"
 	"github.com/juev/getpocket-collector/templates"
@@ -14,31 +11,23 @@ import (
 const storageFile = "data.json"
 
 func main() {
-	var normalize bool
-	flag.BoolVar(&normalize, "n", false, "only normalize database")
-	flag.Parse()
-
-	if normalize {
-		if err := normalizeData(); err != nil {
-			color.Fprintf(os.Stderr, "error: %s\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
 	if err := run(); err != nil {
-		color.Fprintf(os.Stderr, "error: %s\n", err)
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	pocketFeedURL := os.Getenv("GETPOCKET_FEED_URL")
-	if pocketFeedURL == "" {
-		return fmt.Errorf("failed to read `GETPOCKET_FEED_URL` env variable")
+	consumerKey := os.Getenv("CONSUMER_KEY")
+	if consumerKey == "" {
+		return fmt.Errorf("failed to read `CONSUMER_KEY` env variable")
+	}
+	accessToken := os.Getenv("ACCESS_TOKEN")
+	if accessToken == "" {
+		return fmt.Errorf("failed to read `ACCESS_TOKEN` env variable")
 	}
 
-	data := storage.New(pocketFeedURL, storageFile)
+	data := storage.New(storageFile, consumerKey, accessToken)
 	if err := data.Update(); err != nil {
 		return err
 	}
@@ -53,16 +42,5 @@ func run() error {
 		return err
 	}
 
-	return nil
-}
-
-func normalizeData() error {
-	data := storage.New("", storageFile)
-	if err := data.Normalize(); err != nil {
-		return err
-	}
-	if err := data.Write(); err != nil {
-		return err
-	}
 	return nil
 }
