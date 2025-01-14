@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/tidwall/gjson"
 )
 
 // Collector is struct for storing getpocket items
@@ -34,16 +35,10 @@ type Item struct {
 	Published string `json:"published,omitempty"`
 }
 
-// PocketJSONEmpty to check an empty structure
-type PocketJSONEmpty struct {
-	List  []any `json:"list"`
-	Error error `json:"error"`
-}
-
 // PocketJSON to store response from the getpocket api
 type PocketJSON struct {
 	List  map[string]PocketJSONItem `json:"list"`
-	Error error                     `json:"error"`
+	Error string                    `json:"error"`
 	Since int64                     `json:"since"`
 }
 
@@ -117,29 +112,14 @@ func (s *Collector) Write() error {
 
 // PocketParse processed feed from getpocket
 func (s *Collector) PocketParse(bodyBytes []byte) (err error) {
-	var pocketJSONTest PocketJSONEmpty
 	var pocketJSON PocketJSON
-
-	// проверка на пустой массив в ответе
-	if err := json.Unmarshal(bodyBytes, &pocketJSONTest); err == nil {
-		if pocketJSONTest.Error != nil {
-			return pocketJSONTest.Error
-		}
-		return nil
-	}
-
 	if err := json.Unmarshal(bodyBytes, &pocketJSON); err != nil {
 		return fmt.Errorf("failed to unmarchal response from getpocket: %w", err)
-	}
-
-	if pocketJSON.Error != nil {
-		return pocketJSON.Error
 	}
 
 	s.Title = "My Reading List: Unread"
 	for _, el := range pocketJSON.List {
 		if s.notContainsLink(el.Link) {
-			// convert time
 			d, _ := strconv.ParseInt(el.Published, 10, 64)
 			// convert empty title
 			if el.Title == "" {
@@ -169,17 +149,31 @@ func (s *Collector) Update() error {
 		return err
 	}
 
-	request, _ := http.NewRequest(http.MethodGet, "https://getpocket.com/v3/get", nil)
-	request.Header.Set("User-Agent", `getpocket-collector`)
-
-	values := url.Values{}
-	values.Add("consumer_key", s.consumerKey)
-	values.Add("access_token", s.accessToken)
+	defaultCount := 30
+	requestBody := map[string]string{
+		"consumer_key": s.consumerKey,
+		"access_token": s.accessToken,
+		"detailType":   "simple",
+		"state":        "unread",
+		"count":        strconv.Itoa(defaultCount),
+		"total":        "1",
+	}
 	if s.since != "" {
-		values.Add("since", s.since)
+		requestBody["since"] = s.since
 	}
 
-	request.URL.RawQuery = values.Encode()
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return err
+	}
+
+	request, _ := http.NewRequest(
+		http.MethodPost,
+		"https://getpocket.com/v3/get",
+		io.NopCloser(bytes.NewBuffer(jsonData)))
+	request.Header.Set("User-Agent", `getpocket-collector`)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Accept", "application/json")
 
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
@@ -194,6 +188,10 @@ func (s *Collector) Update() error {
 	var body []byte
 	if body, err = io.ReadAll(response.Body); err != nil {
 		return err
+	}
+
+	if gjson.GetBytes(body, "error").String() != "" {
+		return fmt.Errorf("error: %s", gjson.GetBytes(body, "error").String())
 	}
 
 	if err = s.PocketParse(body); err != nil {
